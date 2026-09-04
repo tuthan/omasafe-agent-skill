@@ -1,0 +1,6 @@
+interface:
+  display_name: "OmaSafe Plugin Review"
+  short_description: "Review Omarchy plugins with OmaSafe"
+  default_prompt: "Use $omasafe-plugin-review to review an installed Omarchy plugin or scan a GitHub candidate with the local OmaSafe CLI."
+policy:
+  allow_implicit_invocation: true

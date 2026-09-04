@@ -1,0 +1,12 @@
+{
+  "report": {"schema": "omasafe.report.v1", "tool_version": "0.2.1", "generated_at": "2026-09-04T00:00:00Z", "result": {}},
+  "acquisition": {"schema": "omasafe.acquisition.v1", "operation": "scan-only", "installation_performed": false},
+  "provenance": {"schema": "omasafe.provenance.v1", "tool_version": "0.2.1"},
+  "analysis": {"schema": "omasafe.analysis.v1", "findings": [], "capabilities": [], "invocation_edges": [], "coverage_limitations": []},
+  "enforcement": {"schema": "omasafe.enforcement.v1", "evaluation_state": "evaluated", "outcome": "allow", "authorization_basis": "policy"},
+  "enforcement_policy": {"schema": "omasafe.enforcement-policy.v1"},
+  "enforcement_summary": {"schema": "omasafe.enforcement-summary.v1"},
+  "override": {"schema": "omasafe.override.v1"},
+  "enforcement_audit": {"schema": "omasafe.enforcement-audit.v1"},
+  "schedule": {"schema": "omasafe.schedule.v1"}
+}

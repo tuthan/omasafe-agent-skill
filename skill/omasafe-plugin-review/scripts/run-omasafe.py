@@ -1,0 +1,621 @@
+#!/usr/bin/env python3
+"""Bounded, schema-aware transport for omasafe-cli.
+
+This helper deliberately does not inspect plugin files or calculate findings,
+severity, trust, or enforcement policy. It only executes a literal argv array,
+captures bounded streams, validates the CLI report envelope, and emits a small
+JSON summary for an agent.
+
+Usage:
+    run-omasafe.py [options] -- <omasafe-cli arguments...>
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import selectors
+import signal
+import subprocess
+import sys
+import time
+from typing import Any
+
+
+SCAN_STREAM_CAP = 4 * 1024 * 1024
+OTHER_STREAM_CAP = 2 * 1024 * 1024
+SUMMARY_CAP = 64 * 1024
+TEXT_CAP = 8 * 1024
+STRING_CAP = 2048
+ARGV_ITEM_CAP = 512
+ARGV_COUNT_CAP = 256
+
+REPORT_SCHEMA = "omasafe.report.v1"
+PROVENANCE_SCHEMA = "omasafe.provenance.v1"
+ANALYSIS_SCHEMA = "omasafe.analysis.v1"
+ENFORCEMENT_SCHEMA = "omasafe.enforcement.v1"
+OVERRIDE_SCHEMA = "omasafe.override.v1"
+SCHEDULE_SCHEMA = "omasafe.schedule.v1"
+ENFORCEMENT_POLICY_SCHEMA = "omasafe.enforcement-policy.v1"
+ENFORCEMENT_SUMMARY_SCHEMA = "omasafe.enforcement-summary.v1"
+AUDIT_SCHEMA = "omasafe.enforcement-audit.v1"
+ACQUISITION_SCHEMA = "omasafe.acquisition.v1"
+REMOTE_CANDIDATE_MIN = (0, 2, 2)
+REMOTE_TIMEOUT = 120.0
+
+
+def bounded_string(value: Any, limit: int = STRING_CAP) -> str:
+    """Bound a string and leave JSON escaping to json.dumps."""
+    return str(value)[:limit]
+
+
+def sanitize(value: Any, depth: int = 0) -> Any:
+    """Copy report data into a bounded evidence-only representation."""
+    if depth > 24:
+        return "[evidence depth omitted]"
+    if isinstance(value, str):
+        return bounded_string(value)
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, list):
+        return [sanitize(item, depth + 1) for item in value[:256]]
+    if isinstance(value, dict):
+        items = list(value.items())[:256]
+        return {bounded_string(key, 256): sanitize(item, depth + 1) for key, item in items}
+    return bounded_string(value)
+
+
+def command_parts(args: list[str]) -> tuple[str, str | None]:
+    if not args:
+        return "--version", None
+    if args[0] in {"--version", "-V"}:
+        return args[0], None
+    if args[0] == "plugins" and len(args) > 1:
+        return f"plugins {args[1]}", args[2] if len(args) > 2 else None
+    return args[0], args[1] if len(args) > 1 else None
+
+
+def parse_version(value: Any) -> tuple[int, int, int] | None:
+    match = re.fullmatch(r"(\d+)\.(\d+)(?:\.(\d+))?", str(value or "").strip())
+    if not match:
+        return None
+    return tuple(int(part or 0) for part in match.groups())  # type: ignore[return-value]
+
+
+def has_arg(args: list[str], name: str) -> bool:
+    return name in args or any(item.startswith(name + "=") for item in args)
+
+
+def arg_values(args: list[str], name: str) -> list[str]:
+    values: list[str] = []
+    for index, item in enumerate(args):
+        if item == name and index + 1 < len(args):
+            values.append(args[index + 1])
+        elif item.startswith(name + "="):
+            values.append(item[len(name) + 1 :])
+    return values
+
+
+def is_scan_plugin(args: list[str]) -> bool:
+    return bool(args) and args[0] == "scan-plugin"
+
+
+def is_remote_candidate(args: list[str]) -> bool:
+    return is_scan_plugin(args) and any(has_arg(args, name) for name in ("--git", "--request", "--marketplace"))
+
+
+def needs_v022(args: list[str]) -> bool:
+    return is_scan_plugin(args) and (
+        is_remote_candidate(args) or "review" in arg_values(args, "--report-profile")
+    )
+
+
+def redact_args(args: list[str]) -> list[str]:
+    """Keep argv shape while never emitting the raw pasted request."""
+    redacted: list[str] = []
+    redact_next = False
+    for item in args:
+        if redact_next:
+            redacted.append("[candidate request omitted]")
+            redact_next = False
+        elif item == "--request":
+            redacted.append(item)
+            redact_next = True
+        elif item.startswith("--request="):
+            redacted.append("--request=[candidate request omitted]")
+        else:
+            redacted.append(item)
+    if redact_next:
+        redacted.append("[candidate request omitted]")
+    return redacted
+
+
+def has_json_format(args: list[str]) -> bool:
+    try:
+        index = args.index("--format")
+    except ValueError:
+        return False
+    return index + 1 < len(args) and args[index + 1] == "json"
+
+
+def is_text_only(args: list[str]) -> bool:
+    command, subcommand = command_parts(args)
+    if command in {"--version", "-V", "paths", "marketplace"}:
+        return True
+    if command == "provenance":
+        return not has_json_format(args)
+    if command in {"plugins trust", "plugins review", "plugins review-update"}:
+        return True
+    if command == "plugins override" and subcommand == "create":
+        return True
+    if command == "schedule" and subcommand == "install":
+        return True
+    return False
+
+
+def is_analyzer(args: list[str]) -> bool:
+    command, _ = command_parts(args)
+    return command in {"plugins analyze", "scan-plugin"}
+
+
+def _full_commit(value: Any) -> bool:
+    return bool(re.fullmatch(r"(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})", str(value or "")))
+
+
+def _safe_repository_url(value: Any) -> bool:
+    if not isinstance(value, str) or any(ord(char) < 32 or ord(char) == 127 for char in value):
+        return False
+    return bool(re.fullmatch(r"https://[^\s/?#@]+(?:/[^\s?#]*)?", value))
+
+
+def _bounded_count(value: Any) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
+
+
+def validate_review_profile(result: dict[str, Any]) -> str | None:
+    profile = result.get("report_profile")
+    if not isinstance(profile, dict) or profile.get("name") != "review":
+        return "missing or unsupported review report profile"
+    limit = _bounded_count(profile.get("serialized_byte_limit"))
+    if limit is None or limit <= 0 or limit > 1_572_864:
+        return "unsupported review serialized-byte limit"
+    analysis = result.get("analysis")
+    payload = result.get("payload_inventory")
+    omissions = profile.get("omissions")
+    if not isinstance(analysis, dict) or not isinstance(payload, dict) or not isinstance(omissions, dict):
+        return "review report is missing bounded omission data"
+    for name, key in (("payload_entries", "entries"), ("findings", "findings"),
+                      ("capabilities", "capabilities"), ("invocation_edges", "invocation_edges")):
+        item = omissions.get(name)
+        if not isinstance(item, dict):
+            return f"review report is missing {name} omission data"
+        total = _bounded_count(item.get("total"))
+        emitted = _bounded_count(item.get("emitted"))
+        omitted = _bounded_count(item.get("omitted"))
+        if total is None or emitted is None or omitted is None or emitted + omitted != total:
+            return f"invalid {name} omission arithmetic"
+        if key == "entries":
+            entries = payload.get(key)
+            if not isinstance(entries, list) or entries:
+                return "review report emitted payload entries"
+            payload_total = payload.get("totals", {}).get("entries") if isinstance(payload.get("totals"), dict) else None
+            if payload_total != total:
+                return "payload omission total does not match payload inventory"
+        else:
+            values = analysis.get(key)
+            if not isinstance(values, list) or len(values) != emitted:
+                return f"{key} omission count does not match emitted list"
+    return None
+
+
+def validate_candidate_report(report: dict[str, Any], args: list[str]) -> str | None:
+    """Validate the v0.2.2 candidate boundary without judging findings."""
+    tool_version = parse_version(report.get("tool_version"))
+    if tool_version is None or tool_version < REMOTE_CANDIDATE_MIN:
+        return "candidate route requires omasafe-cli 0.2.2 or newer"
+    result = report.get("result")
+    if not isinstance(result, dict):
+        return "candidate result is not an object"
+    acquisition = result.get("acquisition")
+    if not isinstance(acquisition, dict) or acquisition.get("schema") != ACQUISITION_SCHEMA:
+        return "missing or unsupported candidate acquisition schema"
+    if acquisition.get("operation") != "scan-only" or acquisition.get("installation_performed") is not False:
+        return "candidate report is not scan-only"
+    if acquisition.get("input_kind") not in {"raw-github-url", "omarchy-install-command", "exact-git", "marketplace-id"}:
+        return "unsupported candidate input kind"
+    if acquisition.get("install_verb") not in {"none", "add", "install"}:
+        return "unsupported candidate install verb"
+    identity = acquisition.get("resolved_identity")
+    integrity = acquisition.get("integrity")
+    if not isinstance(identity, dict) or identity.get("kind") != "git-commit" or not _full_commit(identity.get("value")):
+        return "candidate report has no full resolved Git commit"
+    if not isinstance(integrity, dict) or integrity.get("state") != "resolved-exact":
+        return "candidate report has unsupported integrity state"
+    expected_algorithm = "git-sha256" if len(identity["value"]) == 64 else "git-sha1"
+    if integrity.get("algorithm") != expected_algorithm or integrity.get("observed") != identity["value"]:
+        return "candidate integrity does not match the resolved commit"
+    if not isinstance(acquisition.get("network_used"), bool):
+        return "candidate report has invalid network fact"
+    cache = acquisition.get("cache")
+    if not isinstance(cache, dict) or not isinstance(cache.get("used"), bool) or cache.get("result") not in {"not-used", "hit", "miss"}:
+        return "candidate report has invalid cache fact"
+    flags = acquisition.get("discarded_install_flags")
+    if not isinstance(flags, list) or any(flag not in {"enable", "yes"} for flag in flags):
+        return "candidate report has invalid discarded install flags"
+    if not _safe_repository_url(acquisition.get("effective_repository_url")):
+        return "candidate report has no safe effective repository URL"
+    listed = acquisition.get("listed_repository")
+    if listed is not None and not _safe_repository_url(listed):
+        return "candidate report has an invalid listed repository"
+    claim = acquisition.get("marketplace_claim")
+    if acquisition.get("input_kind") == "marketplace-id" and not isinstance(claim, dict):
+        return "marketplace candidate attribution is unavailable"
+    target = result.get("target")
+    if not isinstance(target, dict) or not _full_commit(target.get("revision")) or target.get("revision") != identity["value"]:
+        return "candidate target revision is not the resolved commit"
+    if target.get("source") not in {"resolved-git-request", "pinned-revision", "marketplace-listing"}:
+        return "unsupported candidate target source"
+    analysis = result.get("analysis")
+    if not isinstance(analysis, dict) or analysis.get("schema") != ANALYSIS_SCHEMA:
+        return "missing or unsupported candidate analysis schema"
+    suppressions = result.get("suppressions")
+    if not isinstance(suppressions, dict) or suppressions.get("policy") != "candidate-unsuppressed" or suppressions.get("consulted") is not False:
+        return "candidate suppression policy is not explicit"
+    if suppressions.get("applied") != [] or suppressions.get("active_records") is not None:
+        return "candidate report contains configured suppression state"
+    profile_error = validate_review_profile(result)
+    if profile_error:
+        return profile_error
+    return None
+
+
+def analysis_summary(report: dict[str, Any]) -> dict[str, Any] | None:
+    result = report.get("result")
+    analysis = result.get("analysis") if isinstance(result, dict) else None
+    if not isinstance(analysis, dict):
+        return None
+    profile = result.get("report_profile") if isinstance(result, dict) else None
+    omissions = profile.get("omissions") if isinstance(profile, dict) else {}
+    totals: dict[str, dict[str, int]] = {}
+    for key in ("findings", "capabilities", "invocation_edges"):
+        item = omissions.get(key) if isinstance(omissions, dict) else None
+        values = analysis.get(key)
+        emitted = len(values) if isinstance(values, list) else 0
+        if isinstance(item, dict):
+            total = _bounded_count(item.get("total"))
+            omitted = _bounded_count(item.get("omitted"))
+            if total is not None and omitted is not None:
+                emitted = _bounded_count(item.get("emitted")) or emitted
+                totals[key] = {"total": total, "emitted": emitted, "omitted": omitted}
+                continue
+        totals[key] = {"total": emitted, "emitted": emitted, "omitted": 0}
+    return {
+        **totals,
+        "coverage_limitations": len(analysis.get("coverage_limitations", [])) if isinstance(analysis.get("coverage_limitations"), list) else 0,
+        "analysis_fingerprint": bounded_string(analysis.get("analysis_fingerprint", ""), 128),
+    }
+
+
+def validate_report(report: Any, args: list[str]) -> tuple[bool, str | None]:
+    """Validate transport shape only; never calculate security semantics."""
+    command, subcommand = command_parts(args)
+    if command == "provenance":
+        if not isinstance(report, dict) or report.get("schema") != PROVENANCE_SCHEMA:
+            return False, "unsupported provenance schema"
+        if not isinstance(report.get("tool_version"), str):
+            return False, "provenance missing tool_version"
+        return True, None
+
+    if not isinstance(report, dict) or report.get("schema") != REPORT_SCHEMA:
+        return False, "unsupported report envelope"
+    if not isinstance(report.get("tool_version"), str):
+        return False, "report missing tool_version"
+    if not isinstance(report.get("generated_at"), str):
+        return False, "report missing generated_at"
+    result = report.get("result")
+    if not isinstance(result, dict):
+        return False, "report result is not an object"
+
+    if is_analyzer(args):
+        analysis = result.get("analysis")
+        if not isinstance(analysis, dict) or analysis.get("schema") != ANALYSIS_SCHEMA:
+            return False, "missing or unsupported analysis schema"
+        for field in ("findings", "capabilities", "invocation_edges", "coverage_limitations"):
+            if not isinstance(analysis.get(field), list):
+                return False, f"analysis field {field} is not a list"
+
+    if command in {"plugins enable", "plugins enforcement-status"}:
+        if "decision" not in result:
+            return False, "missing enforcement decision"
+        decision = result.get("decision")
+        if decision is not None:
+            if not isinstance(decision, dict) or decision.get("schema") != ENFORCEMENT_SCHEMA:
+                return False, "unsupported enforcement decision"
+            enum_fields = {
+                "evaluation_state": {"evaluated", "not-evaluated"},
+                "outcome": {"allow", "block"},
+                "authorization_basis": {None, "policy", "override"},
+            }
+            for field, allowed in enum_fields.items():
+                if field in decision and decision[field] not in allowed:
+                    return False, f"unsupported enforcement enum {field}"
+
+    if command == "schedule" and subcommand == "status":
+        if result.get("schema") != SCHEDULE_SCHEMA:
+            return False, "unsupported schedule schema"
+
+    if command == "plugins override" and subcommand == "list":
+        if not isinstance(result.get("overrides"), list):
+            return False, "override list is not a list"
+        for entry in result["overrides"]:
+            if not isinstance(entry, dict):
+                return False, "unsupported override entry"
+            binding = entry.get("binding", entry)
+            if not isinstance(binding, dict) or binding.get("schema") != OVERRIDE_SCHEMA:
+                return False, "unsupported override binding"
+
+    if command == "rules" and subcommand == "coverage":
+        if not isinstance(result.get("coverage"), list) or "map_version" not in result:
+            return False, "unsupported coverage report"
+
+    if needs_v022(args):
+        if not isinstance(report, dict):
+            return False, "candidate report is not an object"
+        candidate_error = validate_candidate_report(report, args)
+        if candidate_error:
+            return False, candidate_error
+
+    nested_schemas = {
+        "enforcement_summary": ENFORCEMENT_SUMMARY_SCHEMA,
+        "enforcement_policy": ENFORCEMENT_POLICY_SCHEMA,
+        "audit": AUDIT_SCHEMA,
+        "audit_event": AUDIT_SCHEMA,
+    }
+    for field, schema in nested_schemas.items():
+        if field in result and result[field] is not None:
+            nested = result[field]
+            if not isinstance(nested, dict) or nested.get("schema") != schema:
+                return False, f"unsupported {field} schema"
+
+    return True, None
+
+
+def kill_process(proc: subprocess.Popen[bytes]) -> None:
+    try:
+        if os.name == "posix":
+            os.killpg(proc.pid, signal.SIGKILL)
+        else:
+            proc.kill()
+    except (ProcessLookupError, OSError):
+        pass
+
+
+def capture(proc: subprocess.Popen[bytes], cap: int, timeout: float) -> tuple[bytes, bytes, dict[str, Any]]:
+    """Read both pipes with caps, without communicate()'s unbounded buffering."""
+    selector = selectors.DefaultSelector()
+    streams: dict[int, bytearray] = {}
+    handles: list[Any] = []
+    for stream in (proc.stdout, proc.stderr):
+        assert stream is not None
+        os.set_blocking(stream.fileno(), False)
+        selector.register(stream, selectors.EVENT_READ)
+        streams[stream.fileno()] = bytearray()
+        handles.append(stream)
+
+    started = time.monotonic()
+    timed_out = False
+    stream_truncated = False
+    aborted = False
+    while selector.get_map():
+        remaining = timeout - (time.monotonic() - started)
+        if remaining <= 0:
+            timed_out = True
+            aborted = True
+            kill_process(proc)
+            break
+        for key, _ in selector.select(min(remaining, 0.25)):
+            fd = key.fd
+            current = streams[fd]
+            read_size = min(65536, max(1, cap - len(current) + 1))
+            try:
+                data = os.read(fd, read_size)
+            except BlockingIOError:
+                continue
+            if not data:
+                selector.unregister(key.fileobj)
+                key.fileobj.close()
+                continue
+            if len(current) + len(data) > cap:
+                current.extend(data[: cap - len(current)])
+                stream_truncated = True
+                aborted = True
+                kill_process(proc)
+                break
+            current.extend(data)
+        if aborted:
+            break
+
+    if aborted:
+        try:
+            proc.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            kill_process(proc)
+            proc.wait(timeout=2)
+        for stream in handles:
+            try:
+                stream.close()
+            except OSError:
+                pass
+        selector.close()
+    else:
+        selector.close()
+        remaining_wait = max(0.0, timeout - (time.monotonic() - started))
+        try:
+            proc.wait(timeout=remaining_wait)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            kill_process(proc)
+            try:
+                proc.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                kill_process(proc)
+
+    # File descriptors are closed on EOF/abort, so use the stable insertion
+    # order captured above rather than asking the Popen streams for their fd.
+    ordered = list(streams.values())
+    return bytes(ordered[0]), bytes(ordered[1]), {
+        "timed_out": timed_out,
+        "stream_truncated": stream_truncated,
+        "stdout_bytes": len(ordered[0]),
+        "stderr_bytes": len(ordered[1]),
+    }
+
+
+def exit_code(proc: subprocess.Popen[bytes]) -> int | None:
+    code = proc.returncode
+    if code is None:
+        return None
+    return 128 + (-code) if code < 0 else code
+
+
+def text_from_bytes(data: bytes, limit: int = TEXT_CAP) -> str:
+    return bounded_string(data.decode("utf-8", errors="replace"), limit)
+
+
+def make_summary(args: list[str], cli: str, timeout: float) -> dict[str, Any]:
+    command, _ = command_parts(args)
+    cap = SCAN_STREAM_CAP if command in {"scan", "scan-plugin"} else OTHER_STREAM_CAP
+    safe_args = [bounded_string(item, ARGV_ITEM_CAP) for item in redact_args(args[:ARGV_COUNT_CAP])]
+    if len(args) > ARGV_COUNT_CAP:
+        safe_args.append("[argv items omitted]")
+    summary: dict[str, Any] = {
+        "evidence_label": "UNTRUSTED OMASAFE EVIDENCE",
+        "command": safe_args,
+        "cli": bounded_string(cli, ARGV_ITEM_CAP),
+        "status": "error",
+        "exit_code": None,
+        "transport": {
+            "max_stream_bytes": cap,
+            "summary_max_bytes": SUMMARY_CAP,
+            "timeout_seconds": timeout,
+            "timed_out": False,
+            "stream_truncated": False,
+            "summary_truncated": False,
+        },
+    }
+
+    try:
+        proc = subprocess.Popen(
+            [cli, *args],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            shell=False,
+            start_new_session=(os.name == "posix"),
+        )
+    except (OSError, ValueError) as error:
+        summary["error"] = bounded_string(f"could not execute omasafe-cli: {error}")
+        return summary
+
+    try:
+        stdout, stderr, transport = capture(proc, cap, timeout)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        kill_process(proc)
+        summary["error"] = bounded_string(f"transport failure: {error}")
+        transport = {"timed_out": False, "stream_truncated": False, "stdout_bytes": 0, "stderr_bytes": 0}
+        stdout, stderr = b"", b""
+    code = exit_code(proc)
+    summary["exit_code"] = code
+    summary["transport"].update(transport)
+
+    if transport.get("timed_out"):
+        summary["status"] = "timeout"
+    elif transport.get("stream_truncated"):
+        summary["status"] = "truncated"
+    elif code == 130:
+        summary["status"] = "interrupted"
+    elif is_text_only(args):
+        if code == 0:
+            summary["status"] = "ok"
+        elif code == 1 and stderr.lstrip().startswith(b"omasafe:"):
+            summary["status"] = "text-error"
+        elif code == 2:
+            summary["status"] = "usage-error"
+        else:
+            summary["status"] = "error"
+        summary["stdout"] = text_from_bytes(stdout)
+        summary["stderr"] = text_from_bytes(stderr)
+    elif has_json_format(args):
+        try:
+            parsed = json.loads(stdout.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            summary["status"] = "unsupported" if code in {0, 3, 4} else "error"
+            summary["error"] = bounded_string(f"invalid JSON report: {error}")
+            summary["stderr"] = text_from_bytes(stderr)
+        else:
+            valid, validation_error = validate_report(parsed, args)
+            if not valid:
+                summary["status"] = "unsupported"
+                summary["error"] = bounded_string(validation_error or "unsupported report")
+                summary["stderr"] = text_from_bytes(stderr)
+            elif code == 0:
+                summary["status"] = "ok"
+                summary["report"] = sanitize(parsed)
+                if is_analyzer(args):
+                    summary["analysis_summary"] = analysis_summary(parsed)
+            elif code == 3 and command == "scan":
+                summary["status"] = "actionable-report"
+                summary["report"] = sanitize(parsed)
+                summary["analysis_summary"] = analysis_summary(parsed)
+            elif code == 4 and is_analyzer(args) and "--fail-on" in args:
+                summary["status"] = "threshold-report"
+                summary["report"] = sanitize(parsed)
+                summary["analysis_summary"] = analysis_summary(parsed)
+            elif code == 1:
+                summary["status"] = "text-error"
+                summary["stderr"] = text_from_bytes(stderr)
+            else:
+                summary["status"] = "error"
+                summary["stderr"] = text_from_bytes(stderr)
+    else:
+        summary["status"] = "error" if code not in {0, 2} else ("ok" if code == 0 else "usage-error")
+        summary["stdout"] = text_from_bytes(stdout)
+        summary["stderr"] = text_from_bytes(stderr)
+
+    encoded = json.dumps(summary, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode()
+    if len(encoded) > SUMMARY_CAP:
+        summary["transport"]["summary_truncated"] = True
+        summary["transport"]["stream_truncated"] = True
+        summary.pop("report", None)
+        if "stdout" in summary:
+            summary["stdout"] = "[structured summary exceeded cap]"
+        if "stderr" in summary:
+            summary["stderr"] = "[structured summary exceeded cap]"
+        summary["status"] = "truncated"
+    return summary
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--cli", default="omasafe-cli", help="path or name of the CLI")
+    parser.add_argument("--timeout", type=float, default=None)
+    parser.add_argument("command", nargs=argparse.REMAINDER, help="place after --")
+    options = parser.parse_args()
+    args = options.command
+    if args and args[0] == "--":
+        args = args[1:]
+    timeout = options.timeout
+    if timeout is None:
+        timeout = REMOTE_TIMEOUT if is_remote_candidate(args) else 30.0
+    summary = make_summary(args, options.cli, max(0.1, timeout))
+    encoded = json.dumps(summary, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+    sys.stdout.write(encoded + "\n")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
