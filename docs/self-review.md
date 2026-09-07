@@ -1,6 +1,6 @@
 # Skill self-review
 
-Reviewed 2026-09-04 against the OmaSafe v0.2.1 contract and v0.2.2 candidate route.
+Reviewed 2026-09-04 against the OmaSafe v0.2.3 cache contract and v0.2.2 candidate route.
 
 ## Bundled code
 
@@ -8,10 +8,14 @@ Reviewed 2026-09-04 against the OmaSafe v0.2.1 contract and v0.2.2 candidate rou
   library only. It executes a literal `omasafe-cli` argv with `shell=False`,
   captures bounded stdout/stderr, validates report shapes/enums, sanitizes
   target-derived strings, redacts raw candidate requests from command metadata,
-  and emits a bounded JSON summary. Candidate reports additionally require
+  and emits a bounded JSON summary. Remote candidate reports additionally require
   scan-only acquisition, exact identity/integrity, unsuppressed policy, and
-  omission arithmetic. It does not inspect plugin files or calculate findings,
-  severity, trust, or enforcement policy.
+  omission arithmetic; local review profiles require bounded omission arithmetic
+  without remote acquisition. Oversized valid reports use a distinct
+  `summary-reduced` evidence summary, while raw stream overflow remains
+  `truncated`. It does not inspect plugin files or calculate findings, severity,
+  trust, or enforcement policy. PATH/version checks establish compatibility, not
+  executable authenticity.
 - `adapters/install.sh` and `adapters/uninstall.sh` operate only on the exact
   selected skill directory. They are offline and support explicit copy/symlink,
   dry-run, collision, and release-match checks.

@@ -384,8 +384,10 @@ malware blocking.
   the CLI contract before use. Let the CLI remain authoritative.
 - Invoke through the deterministic transport runner. Capture without streaming raw
   output into context; cap `scan` at 4 MiB per stream and other commands at 2 MiB
-  per stream, then emit at most 64 KiB of validated, structured summary. Mark any
-  transport truncation as incomplete and retain no clean/success claim.
+  per stream, then emit at most 64 KiB of validated, structured summary. Mark raw
+  stream overflow as incomplete; a valid oversized analyzer report may instead
+  use the distinct `summary-reduced` evidence state and must retain no complete
+  analysis or clean claim.
 - Never print secrets from environment variables or arbitrary plugin file contents.
 - Do not parse human-oriented text when JSON is available. The sanctioned
   exceptions are `--version` and commands that have no `--format` option; their

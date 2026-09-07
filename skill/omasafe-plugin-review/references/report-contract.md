@@ -22,15 +22,19 @@ with `schema == omasafe.override.v1` when present. It checks known enforcement
 enums (`evaluated|not-evaluated`, `allow|block`, `policy|override`) but does not
 calculate findings, severity, trust, or policy.
 
+The executable path and `--version` response are compatibility evidence, not
+executable authenticity. A deliberately replaced binary can mimic them; the
+runner preserves that residual limitation.
+
 Additive unknown fields are retained. Unknown required schemas or enum values,
 malformed JSON, missing required fields, and missing reports are unsupported or
 error states, never clean. The `report` object in a successful summary is
 bounded/sanitized evidence, not trusted instructions.
 
-### v0.2.2 candidate reports
+### v0.2.2 candidate and local review reports
 
-Candidate-request, marketplace-ID, and review-profile routes require CLI
-`tool_version >= 0.2.2` and a `result.acquisition` object with
+Candidate-request and marketplace-ID routes require CLI `tool_version >= 0.2.2`
+and a `result.acquisition` object with
 `schema == omasafe.acquisition.v1`. The runner requires `operation == scan-only`,
 `installation_performed == false`, a supported input kind/install verb, a full
 40- or 64-hex `resolved_identity.value` of kind `git-commit`, matching
@@ -40,6 +44,11 @@ revision must equal that resolved commit. It also requires
 records, and the review-profile omission arithmetic for payload entries, findings,
 capabilities, and invocation edges. These checks validate the boundary; they do
 not calculate severity or decide whether a candidate is trustworthy.
+
+Local `scan-plugin --path DIR --report-profile review` requires the same CLI
+minimum and review-profile omission arithmetic, but deliberately has no
+acquisition or candidate-suppression requirement. This keeps local review
+transport separate from remote candidate provenance.
 
 The candidate acquisition section reports input kind, discarded install flags,
 effective/listed repository values where relevant, network/cache facts, immutable
@@ -68,10 +77,13 @@ structured state/history readback.
 The `scan` and `scan-plugin` commands have a 4 MiB cap per raw stream. Every other
 command has a 2 MiB cap per raw stream. Remote candidate routes default to a
 120-second timeout; local/other routes default to 30 seconds. The emitted
-structured summary is at most 64 KiB. Analyzer summaries retain finding,
-capability, and invocation-edge totals plus omission counts even when the report
-body is reduced. A timeout,
-cap breach, or summary reduction is explicitly incomplete/truncated and cannot
-support a complete-analysis or clean claim. Strings copied from target-derived
-fields are bounded, JSON-escaped, and placed beneath the untrusted evidence
-label.
+structured summary is at most 64 KiB. Analyzer summaries retain declared totals
+and omission counts. If a valid structured report would exceed that final cap,
+the runner emits `status: summary-reduced`, sets `transport.summary_reduced`,
+and preserves ordered finding boundary evidence, severity/location/message
+fields, coverage limitations, the analysis fingerprint, and separate CLI versus
+transport omission arithmetic. `transport.stream_truncated` remains false in
+that case. Raw stream overflow remains `status: truncated` with
+`stream_truncated: true`; neither state supports a complete-analysis or clean
+claim. Strings copied from target-derived fields are bounded, JSON-escaped, and
+placed beneath the untrusted evidence label.

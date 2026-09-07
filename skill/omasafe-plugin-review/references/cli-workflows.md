@@ -7,7 +7,7 @@ identity, analysis, policy, state, and lifecycle semantics.
 
 Run `omasafe-cli --version` first through `scripts/run-omasafe.py --`. Accept a
 recognized version at or above `0.2.1`; candidate-request, marketplace-ID, and
-review-profile routes require `0.2.2` or newer. Do not run operational commands
+local review-profile routes require `0.2.2` or newer. Do not run operational commands
 after a missing, malformed, or older result. `paths` is read-only text. Use
 `provenance --format json` when binary provenance is relevant, but attribute it
 to that binary and disclose that v0.2.1 reports an older runtime stamp.
@@ -43,6 +43,10 @@ commit with `--git URL --revision COMMIT`. A branch, moving tag, or “latest”
 not an approval basis. `marketplace refresh --commit COMMIT` is reproducible;
 `--latest` is intentionally moving and must be requested explicitly.
 
+For a bounded local review, use `scan-plugin --path DIR --report-profile review
+--format json`. This route validates the review profile and its omission
+arithmetic but has no remote acquisition or candidate-suppression fields.
+
 ## Candidate source review
 
 For a raw public GitHub URL or a copied one-line marketplace command, pass the
@@ -72,7 +76,10 @@ The review profile omits payload entries and may cap findings, capabilities, and
 invocation edges. Preserve its total/emitted/omitted counts and limitations; an
 omitted finding list cannot support an empty-finding conclusion. Full and review
 profiles are analysis-equivalent, but only the bounded review profile is intended
-for agent/UI transport.
+for agent/UI transport. If the runner emits `summary-reduced`, use only its
+ordered finding boundary evidence, severity/location/message fields, coverage
+limitations, fingerprint, and explicit CLI/transport omission arithmetic; it is
+not a complete report. Raw `truncated` is a separate stream-overflow state.
 
 ## R2 trust and review decisions
 

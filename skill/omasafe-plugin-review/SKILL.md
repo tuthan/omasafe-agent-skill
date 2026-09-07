@@ -4,7 +4,7 @@ description: Review Omarchy plugins with the local OmaSafe CLI, including immuta
 license: MIT
 metadata:
   author: tuthan
-  version: "1.1.0"
+  version: "1.1.1"
 ---
 
 # OmaSafe plugin review
@@ -32,9 +32,13 @@ scanner, or infer policy in ad-hoc scripts.
 
 1. Resolve `omasafe-cli` locally; do not download or install it implicitly.
 2. Run `--version` through `scripts/run-omasafe.py` and require version `>= 0.2.1`.
-   Candidate-request, marketplace-ID, and `--report-profile review` routes require
-   `>= 0.2.2`; missing, malformed, or incompatible output stops that route and is
-   reported as unknown.
+   Candidate-request and marketplace-ID routes require `>= 0.2.2` plus the
+   immutable acquisition contract. A local `scan-plugin --path ...
+   --report-profile review` also requires `>= 0.2.2`, but does not require remote
+   acquisition fields. Missing, malformed, or incompatible output stops that
+   route and is reported as unknown.
+   PATH resolution and the self-reported version establish compatibility only;
+   they do not authenticate the executable.
 3. Use argv-style execution through the runner. It uses bounded capture and
    validates command-specific JSON before exposing a summary to model context.
 4. If provenance matters, query `provenance --format json`, report its source,
@@ -47,7 +51,9 @@ scanner, or infer policy in ad-hoc scripts.
   --include-analysis --format json`; exit 3 is a valid actionable report.
 - Installed plugin: inventory/status, diff (default or exact `REF_A..REF_B`),
   then `plugins analyze ID --format json`.
-- Local tree: `scan-plugin --path DIR --format json`.
+- Local tree: `scan-plugin --path DIR --format json`; use
+  `--report-profile review` for a bounded review report without remote
+  acquisition requirements.
 - Exact remote candidate: `scan-plugin --git URL --revision COMMIT --format json`
   with an immutable exact commit; disclose network/cache use and do not install.
 - Moving GitHub candidate: pass the complete user field as one argv item to

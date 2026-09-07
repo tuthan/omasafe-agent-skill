@@ -80,6 +80,7 @@ def main():
     result, _, output_bytes = invoke("oversized", "scan", "--format", "json")
     check(result["status"] == "truncated", "oversized stream was not stopped")
     check(result["transport"]["stream_truncated"], "truncation marker missing")
+    check(not result["transport"]["summary_reduced"], "raw stream overflow was mislabeled as reduction")
     check(output_bytes <= 64 * 1024, "summary exceeded 64 KiB")
 
     result, calls, _ = invoke("injection", "plugins", "analyze", "id with spaces;$(touch NO)", "--format", "json")
@@ -102,6 +103,64 @@ def main():
     check(result["transport"]["max_stream_bytes"] == 4 * 1024 * 1024, "scan-plugin did not receive the 4 MiB cap")
     check(result["transport"]["timeout_seconds"] == 120.0, "remote candidate did not receive the 120-second default")
     check(result["analysis_summary"]["findings"] == {"total": 1, "emitted": 1, "omitted": 0}, "finding totals were not retained")
+
+    result, calls, _ = invoke(
+        "local-review", "scan-plugin", "--path", "./plugin",
+        "--report-profile", "review", "--format", "json",
+    )
+    check(result["status"] == "ok", "local review profile should be accepted")
+    check("acquisition" not in result["report"]["result"], "local review acquired remote state")
+    check(calls == [["scan-plugin", "--path", "./plugin", "--report-profile", "review", "--format", "json"]], "local review argv changed")
+
+    result, _, _ = invoke(
+        "default", "scan-plugin", "--path", "./plugin",
+        "--report-profile", "full", "--format", "json",
+    )
+    check(result["status"] == "ok", "local full profile should remain a generic report")
+
+    result, _, _ = invoke(
+        "v024-review", "scan-plugin", "--path", "./plugin",
+        "--report-profile", "review", "--format", "json",
+    )
+    check(result["status"] == "ok", "v0.2.4 local review profile should be accepted")
+    check(result["analysis_summary"]["coverage_gaps"] == {"total": 1, "emitted": 1, "omitted": 0},
+          "coverage-gap totals were not retained")
+    check(result["analysis_summary"]["review_summary"]["freshness"] == "fresh",
+          "review summary freshness was dropped")
+    check(result["analysis_summary"]["review_summary"]["findings"]["by_severity"]["low"]["emitted"] == 1,
+          "review severity rows were dropped")
+    finding = result["report"]["result"]["analysis"]["findings"][0]
+    check(finding["occurrence_id"] == "occ-1" and finding["evidence_steps"][0]["role"] == "source",
+          "structured finding evidence was dropped")
+
+    result, _, _ = invoke(
+        "malformed-omissions", "scan-plugin", "--path", "./plugin",
+        "--report-profile", "review", "--format", "json",
+    )
+    check(result["status"] == "unsupported", "malformed local omission arithmetic was accepted")
+
+    for selector in (
+        ["--git", "https://github.com/example/plugin.git", "--revision", "a" * 40],
+        ["--marketplace", "io.example.fixture"],
+    ):
+        result, _, _ = invoke("candidate", "scan-plugin", *selector, "--report-profile", "review", "--format", "json")
+        check(result["status"] == "ok", f"remote selector {selector[0]} was not validated")
+
+    result, _, _ = invoke("summary-reduction", "scan-plugin", "--path", "./plugin", "--format", "json")
+    check(result["status"] == "summary-reduced", "large structured report did not use evidence reduction")
+    check(result["transport"]["summary_reduced"], "summary reduction marker missing")
+    check(not result["transport"]["stream_truncated"], "summary reduction was mislabeled as stream truncation")
+    check(len(result["report"]["result"]["analysis"]["findings"]) == 40, "reduced finding cap changed")
+    reduced_findings = result["report"]["result"]["analysis"]["findings"]
+    check(reduced_findings[0]["rule_id"] == "oma.fixture.0000", "first boundary finding was lost")
+    check(reduced_findings[-1]["rule_id"] == "oma.fixture.0999", "last boundary finding was lost")
+    counts = result["analysis_summary"]["findings"]
+    check(counts["total"] == counts["emitted"] + counts["omitted"], "reduced finding arithmetic is inconsistent")
+    check(counts["cli_emitted"] == counts["transport_emitted"] + counts["transport_omitted"], "transport omission arithmetic is inconsistent")
+    check(reduced_findings[-1]["severity"] == "critical", "critical boundary evidence was lost")
+    check(reduced_findings[0]["occurrence_id"] == "occ-0000" and
+          reduced_findings[0]["evidence_steps"][0]["role"] == "source",
+          "structured evidence was lost during summary reduction")
 
     result, _, _ = invoke(
         "candidate", "scan-plugin", "--request=" + request,

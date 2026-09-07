@@ -5,7 +5,8 @@ OmaSafe CLI. It supports Codex, Cursor, OpenCode, Claude Code, and compatible
 hosts through one canonical skill directory.
 
 The skill improves review and safer operation, including v0.2.2 read-only
-candidate scans; it does not claim that a plugin or machine is safe. OmaSafe is
+candidate scans and bounded v0.2.4 review transport with omission-aware evidence;
+it does not claim that a plugin or machine is safe. OmaSafe is
 not a sandbox, antivirus product, malware oracle, or replacement for human review.
 
 ## Contents

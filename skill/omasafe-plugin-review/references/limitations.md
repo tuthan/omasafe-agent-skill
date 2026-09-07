@@ -45,3 +45,11 @@ bytes.
 - The runner redacts the raw `--request` value from command metadata and bounds
   target-derived report text, but the pasted field remains visible in the active
   UI/input control until that session is closed.
+- A local `scan-plugin --path ... --report-profile review` is validated without
+  remote acquisition fields. Request, exact-Git, and marketplace selectors retain
+  the immutable candidate acquisition and suppression checks.
+- The runner has separate raw-stream and structured-summary limits. Raw overflow
+  is `truncated`; an otherwise valid oversized report becomes `summary-reduced`
+  with ordered finding boundaries, severity/location/message evidence, bounded
+  coverage limitations, a fingerprint, and explicit CLI/transport omission
+  arithmetic. Neither state is complete analysis.

@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased — v0.2.4 report consumers
+
+- Preserved review summaries, typed coverage-gap totals, occurrence identities,
+  structured evidence steps, behavior context, parser metadata, and presentation
+  markers through the bounded transport.
+- Validated additive omission arithmetic and kept transport reduction separate from
+  CLI selection, including non-prefix review subsets.
+
+## 1.1.1 — 2026-09-04
+
+- Fixed local `scan-plugin --path ... --report-profile review` validation so it
+  does not require remote acquisition fields; request, Git, and marketplace
+  selectors retain the immutable candidate contract.
+- Replaced the all-or-nothing structured-summary fallback with a distinct,
+  bounded `summary-reduced` state that keeps ordered finding boundaries,
+  severity/location/message evidence, coverage limitations, fingerprints, and
+  exact CLI/transport omission arithmetic. Raw stream truncation remains a
+  separate state.
+
 ## 1.1.0 — 2026-09-04
 
 - Added v0.2.2 candidate-source routing for raw GitHub URLs, supported copied

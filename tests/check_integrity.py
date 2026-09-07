@@ -28,8 +28,12 @@ for raw in manifest_before.decode("utf-8").splitlines():
         raise SystemExit(f"digest mismatch: {relative}")
     entries[relative] = digest
 
-subprocess.run([sys.executable, str(root / "tests/generate_integrity.py"), str(root)], check=True, capture_output=True)
-if manifest_before != manifest.read_bytes():
+generated = subprocess.run(
+    [sys.executable, str(root / "tests/generate_integrity.py"), str(root), "--stdout"],
+    check=True,
+    capture_output=True,
+).stdout
+if manifest_before != generated:
     raise SystemExit("integrity manifest generation was not deterministic")
 if not entries:
     raise SystemExit("empty integrity manifest")
