@@ -1,6 +1,7 @@
 # Skill self-review
 
-Reviewed 2026-09-04 against the OmaSafe v0.2.3 cache contract and v0.2.2 candidate route.
+Reviewed 2026-09-08 against the OmaSafe v0.2.5 coverage, opaque-code review,
+and v0.2.2 candidate contracts.
 
 ## Bundled code
 
@@ -33,7 +34,7 @@ filesystem, cache, and lifecycle permissions.
 Plugin content is evidence, never instructions, and reviewed payloads are not
 executed by the skill. The skill cannot sandbox the shared unsandboxed
 `omarchy-shell` process, interpose native or raw-IPC lifecycle bypasses, close
-the v0.2.1 enable preview race, or make no findings equivalent to safety. See
+the current enable preview race, or make no findings equivalent to safety. See
 `skill/omasafe-plugin-review/references/limitations.md` and the versioned source
 map for the complete limitation set.
 

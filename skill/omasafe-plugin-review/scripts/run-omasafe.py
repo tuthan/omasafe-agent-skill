@@ -34,6 +34,7 @@ ARGV_COUNT_CAP = 256
 SUMMARY_FINDINGS_CAP = 40
 SUMMARY_LIMITATIONS_CAP = 64
 SUMMARY_GAPS_CAP = 32
+SUMMARY_CODE_EXPOSURE_CAP = 32
 SUMMARY_EVIDENCE_STEPS_CAP = 3
 SUMMARY_EVIDENCE_FIELD_CAP = 256
 SANITIZE_LIST_CAP = 1024
@@ -42,15 +43,24 @@ REPORT_SCHEMA = "omasafe.report.v1"
 PROVENANCE_SCHEMA = "omasafe.provenance.v1"
 ANALYSIS_SCHEMA = "omasafe.analysis.v1"
 ENFORCEMENT_SCHEMA = "omasafe.enforcement.v1"
+ENFORCEMENT_SCHEMA_V2 = "omasafe.enforcement.v2"
 OVERRIDE_SCHEMA = "omasafe.override.v1"
 SCHEDULE_SCHEMA = "omasafe.schedule.v1"
 ENFORCEMENT_POLICY_SCHEMA = "omasafe.enforcement-policy.v1"
+ENFORCEMENT_POLICY_SCHEMA_V2 = "omasafe.enforcement-policy.v2"
 ENFORCEMENT_SUMMARY_SCHEMA = "omasafe.enforcement-summary.v1"
 AUDIT_SCHEMA = "omasafe.enforcement-audit.v1"
 ACQUISITION_SCHEMA = "omasafe.acquisition.v1"
+EXECUTABLE_REVIEW_SCHEMA = "omasafe.executable-review.v1"
+EXECUTABLE_REVIEW_POLICY_SCHEMA = "omasafe.executable-review-policy.v1"
 REMOTE_CANDIDATE_MIN = (0, 2, 2)
 REVIEW_PROFILE_MIN = (0, 2, 2)
+EXECUTABLE_REVIEW_MIN = (0, 2, 5)
 REMOTE_TIMEOUT = 120.0
+# `marketplace refresh --latest` can run several sequential bounded Git
+# operations, so it needs an aggregate transport budget rather than the
+# ordinary 30-second local-command default.
+MARKETPLACE_REFRESH_TIMEOUT = 300.0
 
 
 def bounded_string(value: Any, limit: int = STRING_CAP) -> str:
@@ -113,6 +123,14 @@ def is_remote_candidate(args: list[str]) -> bool:
     return is_scan_plugin(args) and any(has_arg(args, name) for name in ("--git", "--request", "--marketplace"))
 
 
+def is_marketplace_refresh(args: list[str]) -> bool:
+    return command_parts(args) == ("marketplace", "refresh")
+
+
+def is_executable_review(args: list[str]) -> bool:
+    return command_parts(args)[0] == "plugins executable-review"
+
+
 def needs_v022(args: list[str]) -> bool:
     return is_scan_plugin(args) and (is_remote_candidate(args) or has_review_profile(args))
 
@@ -162,6 +180,8 @@ def is_text_only(args: list[str]) -> bool:
         return not has_json_format(args)
     if command in {"plugins trust", "plugins review", "plugins review-update"}:
         return True
+    if command == "plugins executable-review":
+        return subcommand in {"add", "revoke"} or not has_json_format(args)
     if command == "plugins override" and subcommand == "create":
         return True
     if command == "schedule" and subcommand == "install":
@@ -204,11 +224,13 @@ def validate_review_profile(result: dict[str, Any]) -> str | None:
         return "review report is missing bounded omission data"
     for name, key in (("payload_entries", "entries"), ("findings", "findings"),
                       ("capabilities", "capabilities"), ("invocation_edges", "invocation_edges"),
-                      ("coverage_gaps", "coverage_gaps")):
+                      ("coverage_gaps", "coverage_gaps"), ("code_exposure", "code_exposure")):
         item = omissions.get(name)
-        # 0.2.2 reports predate typed coverage gaps; retain their compatibility
-        # path while validating the additive field whenever the producer emits it.
-        if item is None and name == "coverage_gaps" and "coverage_gaps" not in analysis:
+        # Older reports predate typed coverage gaps and opaque-code rows; retain
+        # their compatibility path while validating each additive field whenever
+        # the producer emits it.
+        if item is None and ((name == "coverage_gaps" and "coverage_gaps" not in analysis) or
+                             (name == "code_exposure" and "code_exposure" not in payload)):
             continue
         if not isinstance(item, dict):
             return f"review report is missing {name} omission data"
@@ -225,8 +247,9 @@ def validate_review_profile(result: dict[str, Any]) -> str | None:
             if payload_total != total:
                 return "payload omission total does not match payload inventory"
         else:
-            values = analysis.get(key)
-            if not isinstance(values, list) or len(values) != emitted:
+            source = payload if key == "code_exposure" else analysis
+            values = source.get(key)
+            if not isinstance(values, list) or len(values) != emitted or emitted > SANITIZE_LIST_CAP:
                 return f"{key} omission count does not match emitted list"
     evidence_item = omissions.get("evidence_observations")
     if evidence_item is not None:
@@ -352,11 +375,36 @@ def validate_local_review_report(report: dict[str, Any]) -> str | None:
     return validate_review_profile(result)
 
 
+def validate_executable_review_list(report: dict[str, Any]) -> str | None:
+    """Validate the bounded read-only executable-review ledger projection."""
+    tool_version = parse_version(report.get("tool_version"))
+    if tool_version is None or tool_version < EXECUTABLE_REVIEW_MIN:
+        return "executable-review requires omasafe-cli 0.2.5 or newer"
+    result = report.get("result")
+    if not isinstance(result, dict) or not isinstance(result.get("plugin_id"), str):
+        return "executable-review list is missing plugin identity"
+    reviews = result.get("reviews")
+    if not isinstance(reviews, list) or len(reviews) > 4096:
+        return "executable-review list is not bounded"
+    for entry in reviews:
+        binding = entry.get("binding") if isinstance(entry, dict) else None
+        if not isinstance(entry, dict) or not isinstance(binding, dict):
+            return "executable-review entry is malformed"
+        if binding.get("schema") != EXECUTABLE_REVIEW_SCHEMA:
+            return "executable-review binding schema is unsupported"
+        if entry.get("status") not in {
+                "active", "expired", "rejected", "revoked",
+                "no-known-issue", "issue-found", "inconclusive"}:
+            return "executable-review entry has an unsupported status"
+    return None
+
+
 def analysis_summary(report: dict[str, Any]) -> dict[str, Any] | None:
     result = report.get("result")
     analysis = result.get("analysis") if isinstance(result, dict) else None
     if not isinstance(analysis, dict):
         return None
+    payload = result.get("payload_inventory") if isinstance(result, dict) else None
     profile = result.get("report_profile") if isinstance(result, dict) else None
     omissions = profile.get("omissions") if isinstance(profile, dict) else {}
     totals: dict[str, dict[str, int]] = {}
@@ -379,6 +427,21 @@ def analysis_summary(report: dict[str, Any]) -> dict[str, Any] | None:
         "coverage_limitations": len(analysis.get("coverage_limitations", [])) if isinstance(analysis.get("coverage_limitations"), list) else 0,
         "analysis_fingerprint": bounded_string(analysis.get("analysis_fingerprint", ""), 128),
     }
+    code_exposure = payload.get("code_exposure") if isinstance(payload, dict) else None
+    code_item = omissions.get("code_exposure") if isinstance(omissions, dict) else None
+    code_emitted = len(code_exposure) if isinstance(code_exposure, list) else 0
+    code_total = code_emitted
+    code_omitted = 0
+    if isinstance(code_item, dict):
+        maybe_total = _bounded_count(code_item.get("total"))
+        maybe_emitted = _bounded_count(code_item.get("emitted"))
+        maybe_omitted = _bounded_count(code_item.get("omitted"))
+        if maybe_total is not None and maybe_emitted is not None and maybe_omitted is not None:
+            code_total, code_emitted, code_omitted = maybe_total, maybe_emitted, maybe_omitted
+    if isinstance(code_exposure, list) or isinstance(code_item, dict):
+        summary["code_exposure"] = {
+            "total": code_total, "emitted": code_emitted, "omitted": code_omitted
+        }
     evidence_item = omissions.get("evidence_observations") if isinstance(omissions, dict) else None
     if isinstance(evidence_item, dict):
         total = _bounded_count(evidence_item.get("total"))
@@ -436,8 +499,15 @@ def validate_report(report: Any, args: list[str]) -> tuple[bool, str | None]:
             return False, "missing enforcement decision"
         decision = result.get("decision")
         if decision is not None:
-            if not isinstance(decision, dict) or decision.get("schema") != ENFORCEMENT_SCHEMA:
+            if not isinstance(decision, dict) or decision.get("schema") not in {
+                    ENFORCEMENT_SCHEMA, ENFORCEMENT_SCHEMA_V2}:
                 return False, "unsupported enforcement decision"
+            if decision.get("schema") == ENFORCEMENT_SCHEMA_V2:
+                for field in ("blockers", "opaque_code_items"):
+                    if not isinstance(decision.get(field), list) or len(decision[field]) > 4096:
+                        return False, f"invalid enforcement v2 {field}"
+                if decision.get("executable_review_policy_version") != EXECUTABLE_REVIEW_POLICY_SCHEMA:
+                    return False, "invalid enforcement v2 executable-review policy"
             enum_fields = {
                 "evaluation_state": {"evaluated", "not-evaluated"},
                 "outcome": {"allow", "block"},
@@ -461,6 +531,11 @@ def validate_report(report: Any, args: list[str]) -> tuple[bool, str | None]:
             if not isinstance(binding, dict) or binding.get("schema") != OVERRIDE_SCHEMA:
                 return False, "unsupported override binding"
 
+    if is_executable_review(args) and subcommand == "list":
+        review_error = validate_executable_review_list(report)
+        if review_error:
+            return False, review_error
+
     if command == "rules" and subcommand == "coverage":
         if not isinstance(result.get("coverage"), list) or "map_version" not in result:
             return False, "unsupported coverage report"
@@ -480,14 +555,15 @@ def validate_report(report: Any, args: list[str]) -> tuple[bool, str | None]:
 
     nested_schemas = {
         "enforcement_summary": ENFORCEMENT_SUMMARY_SCHEMA,
-        "enforcement_policy": ENFORCEMENT_POLICY_SCHEMA,
+        "enforcement_policy": {ENFORCEMENT_POLICY_SCHEMA, ENFORCEMENT_POLICY_SCHEMA_V2},
         "audit": AUDIT_SCHEMA,
         "audit_event": AUDIT_SCHEMA,
     }
     for field, schema in nested_schemas.items():
         if field in result and result[field] is not None:
             nested = result[field]
-            if not isinstance(nested, dict) or nested.get("schema") != schema:
+            if not isinstance(nested, dict) or nested.get("schema") not in (
+                    schema if isinstance(schema, set) else {schema}):
                 return False, f"unsupported {field} schema"
 
     return True, None
@@ -764,10 +840,21 @@ def compact_gap(value: Any) -> Any:
     return result
 
 
+def compact_code_exposure(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {"value": bounded_string(value, SUMMARY_EVIDENCE_FIELD_CAP)}
+    return compact_fields(value, (
+        "relative_path", "native_format", "exact_sha256", "digest_state",
+        "exposure", "content_class", "opaque_review_required", "review_status",
+    ))
+
+
 def report_omission_counts(result: dict[str, Any], name: str, field: str) -> tuple[int, int, int]:
     """Return total, CLI-emitted, CLI-omitted counts from a validated report."""
-    analysis = result.get("analysis") if isinstance(result.get("analysis"), dict) else {}
-    values = analysis.get(field)
+    source = result.get("analysis") if isinstance(result.get("analysis"), dict) else {}
+    if field == "code_exposure":
+        source = result.get("payload_inventory") if isinstance(result.get("payload_inventory"), dict) else {}
+    values = source.get(field)
     actual = len(values) if isinstance(values, list) else 0
     profile = result.get("report_profile")
     omissions = profile.get("omissions") if isinstance(profile, dict) else None
@@ -842,6 +929,8 @@ def reduce_analysis_report(report: dict[str, Any]) -> tuple[dict[str, Any], dict
     findings = analysis.get("findings") if isinstance(analysis.get("findings"), list) else []
     limitations = analysis.get("coverage_limitations") if isinstance(analysis.get("coverage_limitations"), list) else []
     coverage_gaps = analysis.get("coverage_gaps") if isinstance(analysis.get("coverage_gaps"), list) else []
+    payload = result.get("payload_inventory") if isinstance(result.get("payload_inventory"), dict) else {}
+    code_exposure = payload.get("code_exposure") if isinstance(payload.get("code_exposure"), list) else []
     finding_total, finding_cli_emitted, finding_cli_omitted = report_omission_counts(
         result, "findings", "findings"
     )
@@ -849,9 +938,15 @@ def reduce_analysis_report(report: dict[str, Any]) -> tuple[dict[str, Any], dict
     gap_total, gap_cli_emitted, gap_cli_omitted = report_omission_counts(
         result, "coverage_gaps", "coverage_gaps"
     )
+    code_total, code_cli_emitted, code_cli_omitted = report_omission_counts(
+        result, "code_exposure", "code_exposure"
+    )
     finding_items = [compact_finding(item) for item in bounded_ordered_items(findings, SUMMARY_FINDINGS_CAP)]
     limitation_items = [compact_limitation(item) for item in bounded_ordered_items(limitations, SUMMARY_LIMITATIONS_CAP)]
     gap_items = [compact_gap(item) for item in bounded_ordered_items(coverage_gaps, SUMMARY_GAPS_CAP)]
+    code_items = [compact_code_exposure(item) for item in bounded_ordered_items(
+        code_exposure, SUMMARY_CODE_EXPOSURE_CAP
+    )]
     finding_counts = reduction_counts(
         finding_total, finding_cli_emitted, finding_cli_omitted, len(finding_items)
     )
@@ -859,6 +954,7 @@ def reduce_analysis_report(report: dict[str, Any]) -> tuple[dict[str, Any], dict
         limitation_total, limitation_total, 0, len(limitation_items)
     )
     gap_counts = reduction_counts(gap_total, gap_cli_emitted, gap_cli_omitted, len(gap_items))
+    code_counts = reduction_counts(code_total, code_cli_emitted, code_cli_omitted, len(code_items))
 
     compact_analysis: dict[str, Any] = {
         "schema": analysis.get("schema"),
@@ -889,6 +985,12 @@ def reduce_analysis_report(report: dict[str, Any]) -> tuple[dict[str, Any], dict
     else:
         compact_result_review = None
     compact_result: dict[str, Any] = compact_candidate_context(result)
+    if isinstance(payload, dict):
+        compact_result["payload_inventory"] = {
+            "code_exposure": code_items,
+            "coverage_states": compact_count_map(payload.get("coverage_states")),
+            "entries": [],
+        }
     for field in ("plugin_id", "id"):
         if field in result:
             compact_result[field] = bounded_string(result[field], SUMMARY_EVIDENCE_FIELD_CAP)
@@ -918,6 +1020,7 @@ def reduce_analysis_report(report: dict[str, Any]) -> tuple[dict[str, Any], dict
         "findings": finding_counts,
         "coverage_limitations": limitation_counts,
         "coverage_gaps": gap_counts,
+        "code_exposure": code_counts,
         "analysis_fingerprint": compact_analysis["analysis_fingerprint"],
     }
     if compact_result_review is not None:
@@ -993,6 +1096,25 @@ def _fit_summary_to_cap(summary: dict[str, Any]) -> dict[str, Any]:
                         if field in finding:
                             finding.pop(field, None)
                             changed = True
+        payload = result.get("payload_inventory") if isinstance(result, dict) else None
+        if isinstance(payload, dict):
+            values = payload.get("code_exposure")
+            if isinstance(values, list) and len(values) > 1:
+                kept = bounded_ordered_items(values, max(1, len(values) // 2))
+                payload["code_exposure"] = kept
+                details = summary.get("analysis_summary")
+                if isinstance(details, dict):
+                    count = details.get("code_exposure")
+                    if isinstance(count, dict):
+                        total = _bounded_count(count.get("total"))
+                        cli_emitted = _bounded_count(count.get("cli_emitted"))
+                        count["emitted"] = len(kept)
+                        if total is not None:
+                            count["omitted"] = max(0, total - len(kept))
+                        if cli_emitted is not None:
+                            count["transport_emitted"] = len(kept)
+                            count["transport_omitted"] = max(0, cli_emitted - len(kept))
+                changed = True
         details = summary.get("analysis_summary")
         if isinstance(details, dict) and "review_summary" in details:
             details.pop("review_summary", None)
@@ -1155,7 +1277,12 @@ def main() -> int:
         args = args[1:]
     timeout = options.timeout
     if timeout is None:
-        timeout = REMOTE_TIMEOUT if is_remote_candidate(args) else 30.0
+        if is_marketplace_refresh(args):
+            timeout = MARKETPLACE_REFRESH_TIMEOUT
+        elif is_remote_candidate(args):
+            timeout = REMOTE_TIMEOUT
+        else:
+            timeout = 30.0
     summary = make_summary(args, options.cli, max(0.1, timeout))
     encoded = _encoded_summary(summary).decode("ascii")
     sys.stdout.write(encoded + "\n")

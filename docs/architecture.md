@@ -1,6 +1,6 @@
 # Architecture and Safety Contract
 
-Status: corrected against the v0.2.1 contract plus the v0.2.2 candidate route, 2026-09-04
+Status: corrected against the v0.2.5 coverage/enforcement contract plus the v0.2.2 candidate route, 2026-09-08
 
 ## 1. System boundary
 
@@ -70,8 +70,8 @@ compromise.
 - distinguish observation, analysis, policy evaluation, and mutation;
 - require and preserve operator authorization for mutations;
 - bind mutations to the exact identity and policy shown in the preview where the
-  v0.2.1 CLI exposes an expected-value argument, and disclose the enable race where
-  it does not;
+  CLI exposes expected-value arguments for supported mutations, and disclose the
+  enable race where it does not;
 - explain findings, evidence, coverage, freshness, and limitations in plain language;
 - recommend manual review without declaring software safe or malicious.
 
@@ -259,7 +259,7 @@ and reviewed-update paths. Do not substitute direct native Omarchy commands when
 guarded OmaSafe command exists. A request to "make it safe" is not authorization to
 enable, update, install, suppress, override, or rebaseline.
 
-CLI backstops are asymmetric in v0.2.1. `trust`, `review`, and `review-update`
+CLI backstops remain asymmetric in v0.2.5. `trust`, `review`, and `review-update`
 require `--yes`; trust/review accept expected head/tree/digest and review-update
 accepts an expected commit. `plugins enable` has neither `--yes` nor expected
 identity arguments. `override create`, `marketplace refresh`, and `schedule install`
@@ -267,7 +267,7 @@ also have no CLI-side confirmation flag. For those commands the confirmation gat
 entirely skill-side discipline; for enable, an immediate pre-execution re-read
 reduces but cannot close the approval TOCTOU race.
 
-`schedule install` has no OmaSafe uninstall/rollback command in v0.2.1. The v1 skill
+`schedule install` has no OmaSafe uninstall/rollback command in v0.2.5. The skill
 may explain the command and read schedule status, but must not execute installation.
 Defer it until the CLI owns a tested uninstall path; do not silently cross the
 boundary with direct `systemctl --user disable --now omasafe-scan.timer`.
@@ -286,7 +286,7 @@ interposition.
 ### Environment check
 
 1. Resolve `omasafe-cli` without downloading anything.
-2. Run `--version`; require a recognized OmaSafe version at or above 0.2.1. This is
+2. Run `--version`; require a recognized OmaSafe version at or above 0.2.5. This is
    the one sanctioned parse of stable human-oriented stdout because `--version`
    exposes no JSON form.
 3. Optionally run `provenance --format json` when binary origin or integrity is part
@@ -360,19 +360,18 @@ Inspect enforcement status and source identity first. Default to asking the oper
 to choose advisory or hardened; do not silently infer a policy for a state-changing
 request. For update, require the exact expected commit supplied by trustworthy
 context and preview it. Report the CLI's `evaluation_state`, `outcome`,
-`authorization_basis`, reason codes, policy identity, postconditions, and recovery
-guidance without recomputing them.
+`authorization_basis`, reason codes, typed v2 blockers/opaque-code items, policy
+identity, postconditions, and recovery guidance without recomputing them.
 
 For enable, re-read installed identity and inactive state immediately before calling
-the CLI and show the previewed identity in the final report. The v0.2.1 command
+the CLI and show the previewed identity in the final report. The current command
 cannot bind that preview through expected-value arguments, so label the residual
 race explicitly. Do not claim the mutation transaction has cryptographic or CLI-
 enforced identity continuity for enable.
 
-Hardened v0.2.1 is useful even though its evidence-gated blocking rule-family set is
-currently empty: it still applies coverage, freshness, unsupported-executable, and
-installed-tree postcondition checks. The skill must not describe it as complete
-malware blocking.
+Hardened v0.2.5 applies coverage, freshness, unsupported-executable, opaque-code
+review, and installed-tree postcondition checks. The skill must not describe it as
+complete malware blocking.
 
 ## 8. Command construction
 
@@ -400,16 +399,19 @@ Schema expectations are command-specific:
 | Output | Required outer shape |
 | --- | --- |
 | `provenance --format json` | Top-level `omasafe.provenance.v1`; it is not wrapped in `omasafe.report.v1` |
-| Inventory, status, diff, scan, analysis, local/remote scan-plugin, rules, enable, enforcement status, override list, and schedule status JSON | Outer `omasafe.report.v1` |
-| `--version`, `paths`, trust, review, review-update, override create, marketplace refresh, and schedule install | Text only; no JSON report contract |
+| Inventory, status, diff, scan, analysis, local/remote scan-plugin, rules, enable, enforcement status, executable-review list, override list, and schedule status JSON | Outer `omasafe.report.v1` |
+| `--version`, `paths`, trust, review, review-update, executable-review add/revoke, override create, marketplace refresh, and schedule install | Text only; no JSON report contract |
 
-The complete v0.2.1 schema vocabulary that M0 pins is:
+The current v0.2.5 schema vocabulary, with legacy enforcement compatibility, is:
 
 - `omasafe.report.v1` and top-level `omasafe.provenance.v1`;
-- nested `omasafe.analysis.v1`, `omasafe.enforcement.v1`,
-  `omasafe.enforcement-policy.v1`, `omasafe.enforcement-summary.v1`,
+- nested `omasafe.analysis.v1`, `omasafe.enforcement.v1` or
+  `omasafe.enforcement.v2`, `omasafe.enforcement-policy.v1` or
+  `omasafe.enforcement-policy.v2`, `omasafe.enforcement-summary.v1`,
   `omasafe.override.v1`, `omasafe.enforcement-audit.v1`, and
-  `omasafe.schedule.v1`.
+  `omasafe.schedule.v1`;
+- executable-review bindings use `omasafe.executable-review.v1` and the
+  `omasafe.executable-review-policy.v1` policy version.
 
 Treat unknown required nested schemas/enums as unsupported. Additive unknown fields
 may be ignored. Preserve tool version, generation time, target identity, analyzer

@@ -1,7 +1,11 @@
 # Implementation Plan
 
-Status: corrected against OmaSafe v0.2.1, 2026-09-04  
+Status: original v0.2.1 contract plan completed and consumer-aligned to OmaSafe v0.2.5, 2026-09-08
 Owner: Hung Vo unless reassigned
+
+Milestone notes below preserve the original planning baseline where useful; the
+shipped consumer contract is the current v0.2.5 behavior documented in the skill
+references and test fixtures.
 
 ## Delivery strategy
 
@@ -23,13 +27,15 @@ not time estimates.
   aligns with both OmaSafe repositories; choosing another license requires a
   separate explicit decision and rationale.
 - Record supported baselines:
-  - OmaSafe CLI minimum `0.2.1`;
+  - OmaSafe CLI minimum `0.2.5` for current consumers, with legacy v1 enforcement
+    reports accepted for compatibility;
   - `omasafe.report.v1` and the independent top-level
     `omasafe.provenance.v1`;
-  - nested `omasafe.analysis.v1`, `omasafe.enforcement.v1`,
-    `omasafe.enforcement-policy.v1`, `omasafe.enforcement-summary.v1`,
+  - nested `omasafe.analysis.v1`, `omasafe.enforcement.v1` or
+    `omasafe.enforcement.v2`, `omasafe.enforcement-policy.v1` or
+    `omasafe.enforcement-policy.v2`, `omasafe.enforcement-summary.v1`,
     `omasafe.override.v1`, `omasafe.enforcement-audit.v1`, and
-    `omasafe.schedule.v1`;
+    `omasafe.schedule.v1`, plus `omasafe.executable-review.v1` bindings;
   - the versioned security-surface stamp: Omarchy 4.0.1-1 / Quickshell 0.3.1-1,
     verified 2026-08-27.
 - Record and file the OmaSafe defect that `provenance.supported_runtime` still
@@ -43,7 +49,7 @@ not time estimates.
 ### Exit criteria
 
 - Repository structure is reviewed and committed.
-- No plan assumes a CLI command or safety guarantee not present in v0.2.1.
+- No current consumer assumes a CLI command or safety guarantee not present in v0.2.5.
 - The first-install bypass, shared-shell risk, empty hardened blocking-family set,
   user-owned-state limitation, enable TOCTOU gap, text-only error surface, and
   missing schedule-uninstall path are explicit.
@@ -64,7 +70,7 @@ not time estimates.
   - retain explicit truncation/unsupported/error state;
   - validate command-specific outer/nested schemas without calculating findings,
     severity, trust, or enforcement policy.
-- Add fixtures for quiet/actionable reports, all nine schemas, top-level provenance,
+- Add fixtures for quiet/actionable reports, the supported schema set, top-level provenance,
   text-only successful mutations, exit 1 stderr refusals/errors, exit 2 usage,
   analyzer exit 4, interruption 130, malformed/oversized output, partial coverage,
   drift, stale runtime provenance, enforcement outcomes, and target prompt

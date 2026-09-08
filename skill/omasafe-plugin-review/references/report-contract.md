@@ -16,11 +16,14 @@ context, validates required shape/enums, and emits one bounded JSON summary.
 
 The runner checks the outer envelope and command-specific required nested shapes:
 `result.analysis.schema == omasafe.analysis.v1` for analyzer commands,
-`result.decision.schema == omasafe.enforcement.v1` when a decision is present,
-`result.schema == omasafe.schedule.v1` for schedule status, and override entries
-with `schema == omasafe.override.v1` when present. It checks known enforcement
-enums (`evaluated|not-evaluated`, `allow|block`, `policy|override`) but does not
-calculate findings, severity, trust, or policy.
+`result.decision.schema` is either legacy `omasafe.enforcement.v1` or current
+`omasafe.enforcement.v2` when a decision is present, `result.schema ==
+omasafe.schedule.v1` for schedule status, and override entries with
+`schema == omasafe.override.v1` when present. Enforcement v2 must carry bounded
+`blockers` and `opaque_code_items` arrays and its executable-review policy version.
+Nested enforcement policy accepts v1 for legacy reports and v2 for current reports.
+The runner checks known enforcement enums (`evaluated|not-evaluated`, `allow|block`,
+`policy|override`) but does not calculate findings, severity, trust, or policy.
 
 The executable path and `--version` response are compatibility evidence, not
 executable authenticity. A deliberately replaced binary can mimic them; the
@@ -42,7 +45,8 @@ and a `result.acquisition` object with
 revision must equal that resolved commit. It also requires
 `suppressions.policy == candidate-unsuppressed`, `consulted == false`, no applied
 records, and the review-profile omission arithmetic for payload entries, findings,
-capabilities, and invocation edges. These checks validate the boundary; they do
+capabilities, invocation edges, coverage gaps, and opaque-code rows. These checks
+validate the boundary; they do
 not calculate severity or decide whether a candidate is trustworthy.
 
 Local `scan-plugin --path DIR --report-profile review` requires the same CLI
@@ -56,10 +60,23 @@ identity, integrity, marketplace claims, and limitations. Verification or a
 resolved commit is evidence about what was scanned, not a safety verdict or an
 approval to install.
 
+### v0.2.5 opaque-code review
+
+Current analyzer reports include `result.payload_inventory.code_exposure`. Each
+row is bound to a relative path and native format, and may carry the exact
+SHA-256, exposure class, digest state, `opaque_review_required`, and CLI-derived
+review status. Review-profile reports disclose omission arithmetic in
+`result.report_profile.omissions.code_exposure`; the runner retains bounded rows
+in both normal and `summary-reduced` summaries. `plugins executable-review list`
+uses the same report envelope and is read-only. `add` and `revoke` remain
+interactive text-only mutations; success prose is never treated as a review
+binding without structured enforcement/ledger readback.
+
 ## Text-only and exit statuses
 
-`--version`, `paths`, trust, review, review-update, override create, marketplace
-refresh, and schedule install are text-only. Bounded text is status context;
+`--version`, `paths`, trust, review, review-update, override create,
+executable-review add/revoke, marketplace refresh, and schedule install are
+text-only. Bounded text is status context;
 never parse success prose into an invented report. Mutations still require
 structured state/history readback.
 
@@ -76,13 +93,16 @@ structured state/history readback.
 
 The `scan` and `scan-plugin` commands have a 4 MiB cap per raw stream. Every other
 command has a 2 MiB cap per raw stream. Remote candidate routes default to a
-120-second timeout; local/other routes default to 30 seconds. The emitted
-structured summary is at most 64 KiB. Analyzer summaries retain declared totals
-and omission counts. If a valid structured report would exceed that final cap,
+120-second timeout; marketplace refresh defaults to a 300-second aggregate
+timeout because `--latest` can run several sequential Git operations; local/other
+routes default to 30 seconds. The emitted structured summary is at most 64 KiB.
+Analyzer summaries retain declared totals and omission counts for coverage and
+opaque-code rows. If a valid structured report would exceed that final cap,
 the runner emits `status: summary-reduced`, sets `transport.summary_reduced`,
 and preserves ordered finding boundary evidence, severity/location/message
-fields, coverage limitations, the analysis fingerprint, and separate CLI versus
-transport omission arithmetic. `transport.stream_truncated` remains false in
+fields, opaque-code boundary evidence, coverage limitations, the analysis
+fingerprint, and separate CLI versus transport omission arithmetic.
+`transport.stream_truncated` remains false in
 that case. Raw stream overflow remains `status: truncated` with
 `stream_truncated: true`; neither state supports a complete-analysis or clean
 claim. Strings copied from target-derived fields are bounded, JSON-escaped, and

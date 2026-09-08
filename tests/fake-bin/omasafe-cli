@@ -16,7 +16,7 @@ if log_path:
 scenario = os.environ.get("FAKE_OMASAFE_SCENARIO", "default")
 
 if args in ([], ["--version"], ["-V"]):
-    print("omasafe-cli 0.2.1")
+    print("omasafe-cli 0.2.5" if scenario == "v025" else "omasafe-cli 0.2.1")
     raise SystemExit(0)
 
 if scenario == "stderr-error":
@@ -136,8 +136,8 @@ def analysis():
 
 def enforcement():
     outcome = "mystery" if scenario == "unknown-enum" else "allow"
-    return {
-        "schema": "omasafe.enforcement.v1",
+    decision = {
+        "schema": "omasafe.enforcement.v2" if scenario == "v025" else "omasafe.enforcement.v1",
         "plugin_id": "io.example.fixture",
         "operation": "enable",
         "evaluation_state": "evaluated",
@@ -146,6 +146,13 @@ def enforcement():
         "reason_codes": [],
         "blocking_rule_ids": [],
     }
+    if scenario == "v025":
+        decision.update({
+            "blockers": [],
+            "opaque_code_items": [],
+            "executable_review_policy_version": "omasafe.executable-review-policy.v1",
+        })
+    return decision
 
 
 def report():
@@ -157,14 +164,38 @@ def report():
             result["plugin_id"] = "io.example.fixture"
         if subcommand == "enforcement-status":
             result = {"plugin_id": "io.example.fixture", "decision": enforcement()}
+            if scenario == "v025":
+                result["enforcement_policy"] = {"schema": "omasafe.enforcement-policy.v2"}
         elif subcommand == "enable":
             result = {"plugin_id": "io.example.fixture", "enabled": True, "decision": enforcement()}
         elif subcommand == "analyze":
             result = {"plugin_id": "io.example.fixture", "analysis": analysis()}
         elif subcommand == "override" and len(args) > 2 and args[2] == "list":
             result = {"overrides": []}
+        elif subcommand == "executable-review" and len(args) > 2 and args[2] == "list":
+            result = {"plugin_id": "io.example.fixture", "reviews": [{
+                "binding": {
+                    "schema": "omasafe.executable-review.v1",
+                    "plugin_id": "io.example.fixture",
+                    "relative_path": "bin/helper",
+                    "native_format": "elf",
+                    "exact_sha256": "c" * 64,
+                    "review_policy_version": "omasafe.executable-review-policy.v1",
+                    "assessment_method": "manual-binary-review",
+                    "provider": "fixture",
+                    "assessment_outcome": "no-known-issue",
+                    "performed_at": "2026-09-08T00:00:00Z",
+                    "limitations": [],
+                    "operator_decision": "accepted",
+                    "reason": "fixture evidence",
+                    "decision_at": "2026-09-08T00:00:00Z",
+                    "expires_at": "2099-09-08T00:00:00Z",
+                    "audit_event_id": "fixture-audit",
+                },
+                "status": "active",
+            }]}
     elif command == "scan-plugin":
-        if scenario in {"candidate", "local-review", "malformed-omissions", "v024-review"}:
+        if scenario in {"candidate", "local-review", "malformed-omissions", "v024-review", "v025"}:
             result = {
                 "target": {
                     "source": "resolved-git-request",
@@ -188,6 +219,16 @@ def report():
                     "entries": [],
                     "entries_omitted": 1,
                     "profile": "review",
+                    **({"code_exposure": [{
+                        "relative_path": "bin/helper",
+                        "native_format": "elf",
+                        "exposure": "executable",
+                        "content_class": "native-code",
+                        "digest_state": "exact",
+                        "exact_sha256": "c" * 64,
+                        "opaque_review_required": True,
+                        "review_status": "unreviewed",
+                    }]} if scenario == "v025" else {}),
                 },
                 "acquisition": {
                     "schema": "omasafe.acquisition.v1",
@@ -221,6 +262,8 @@ def report():
                         "invocation_edges": {"total": 0, "emitted": 0, "omitted": 0},
                         "coverage_gaps": {"total": len(analysis().get("coverage_gaps", [])),
                             "emitted": len(analysis().get("coverage_gaps", [])), "omitted": 0},
+                        **({"code_exposure": {"total": 1, "emitted": 1, "omitted": 0}}
+                           if scenario == "v025" else {}),
                         "evidence_observations": {"total": 1 if scenario == "v024-review" else 0,
                             "emitted": 1 if scenario == "v024-review" else 0, "omitted": 0},
                     },
@@ -233,7 +276,7 @@ def report():
                     "presentation_version": 1,
                     "redaction_policy_version": 1,
                 })
-            if scenario != "candidate":
+            if scenario not in {"candidate"}:
                 result.pop("target", None)
                 result.pop("acquisition", None)
                 result.pop("suppressions", None)
@@ -261,6 +304,8 @@ if scenario in {"candidate", "local-review", "malformed-omissions"}:
     payload["tool_version"] = "0.2.2"
 elif scenario == "v024-review":
     payload["tool_version"] = "0.2.4"
+elif scenario == "v025":
+    payload["tool_version"] = "0.2.5"
 print(json.dumps(payload))
 if scenario == "actionable-scan" and args and args[0] == "scan":
     raise SystemExit(3)

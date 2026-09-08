@@ -17,14 +17,15 @@ bytes.
 - Plugin lifecycle can be reached through native commands and shell IPC. OmaSafe
   does not claim to interpose those bypasses. First-install inactive staging has
   an inotify observation window; a review is not first-install enforcement.
-- Hardened policy v0.2.1 still checks coverage, freshness, unsupported executable
-  handling, and installed-tree postconditions, but its evidence-gated blocking
-  rule-family set is currently empty. It is not comprehensive malicious-code
-  prevention.
-- `plugins enable` has no `--yes` or expected-identity arguments in v0.2.1. An
-  immediate re-read narrows but cannot close its preview-to-use race. Several
-  text-only mutations likewise lack a CLI confirmation backstop.
-- `schedule install` has no matching OmaSafe uninstall/rollback command, so v1
+- Hardened policy v0.2.5 checks coverage, freshness, unsupported executable
+  handling, opaque-code review bindings, and installed-tree postconditions. A
+  matching accepted review is exact-path/digest/policy/identity evidence, not a
+  comprehensive malicious-code verdict.
+- `plugins enable` still has no `--yes` or expected-identity arguments in v0.2.5.
+  An immediate re-read narrows but cannot close its preview-to-use race. Opaque
+  review `add` and `revoke` do have interactive confirmation requirements, but
+  their success remains text-only and needs structured readback.
+- `schedule install` has no matching OmaSafe uninstall/rollback command, so this
   reports or inspects schedule state but does not install it.
 - OmaSafe state and cache are user-owned. They are useful audit state, not
   tamper-proof evidence after same-user compromise.
@@ -39,9 +40,9 @@ bytes.
   the cached catalog cannot be cryptographically reverified and never refreshes
   it silently.
 - The review profile is bounded to 1,572,864 serialized UTF-8 bytes. It omits
-  payload entries and can omit tails of repeated analysis lists with exact
-  counts. An omitted finding list prevents an unqualified no-active-findings
-  statement.
+  payload entries and can omit tails of repeated analysis or opaque-code lists
+  with exact counts. An omitted finding or opaque-code list prevents an
+  unqualified complete/clean conclusion.
 - The runner redacts the raw `--request` value from command metadata and bounds
   target-derived report text, but the pasted field remains visible in the active
   UI/input control until that session is closed.
@@ -50,6 +51,6 @@ bytes.
   the immutable candidate acquisition and suppression checks.
 - The runner has separate raw-stream and structured-summary limits. Raw overflow
   is `truncated`; an otherwise valid oversized report becomes `summary-reduced`
-  with ordered finding boundaries, severity/location/message evidence, bounded
-  coverage limitations, a fingerprint, and explicit CLI/transport omission
-  arithmetic. Neither state is complete analysis.
+  with ordered finding and opaque-code boundaries, severity/location/message
+  evidence, bounded coverage limitations, a fingerprint, and explicit
+  CLI/transport omission arithmetic. Neither state is complete analysis.

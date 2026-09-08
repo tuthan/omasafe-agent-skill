@@ -4,7 +4,7 @@ description: Review Omarchy plugins with the local OmaSafe CLI, including immuta
 license: MIT
 metadata:
   author: tuthan
-  version: "1.1.1"
+  version: "1.2.0"
 ---
 
 # OmaSafe plugin review
@@ -31,12 +31,12 @@ scanner, or infer policy in ad-hoc scripts.
 ## Start every operational review
 
 1. Resolve `omasafe-cli` locally; do not download or install it implicitly.
-2. Run `--version` through `scripts/run-omasafe.py` and require version `>= 0.2.1`.
-   Candidate-request and marketplace-ID routes require `>= 0.2.2` plus the
-   immutable acquisition contract. A local `scan-plugin --path ...
-   --report-profile review` also requires `>= 0.2.2`, but does not require remote
-   acquisition fields. Missing, malformed, or incompatible output stops that
-   route and is reported as unknown.
+2. Run `--version` through `scripts/run-omasafe.py` and require version `>= 0.2.5`
+   for current coverage and enforcement behavior. Candidate-request and
+   marketplace-ID routes still require the immutable acquisition contract. A
+   pre-0.2.5 CLI may be used only for a clearly labeled legacy report; it cannot
+   establish opaque-code review status or v2 enforcement. Missing, malformed, or
+   incompatible output stops that route and is reported as unknown.
    PATH resolution and the self-reported version establish compatibility only;
    they do not authenticate the executable.
 3. Use argv-style execution through the runner. It uses bounded capture and
@@ -68,6 +68,10 @@ scanner, or infer policy in ad-hoc scripts.
 - Rules and context: use `rules list`, `rules coverage`, `rules explain RULE_ID`,
   `plugins enforcement-status ID`, `plugins override list`, `schedule status`,
   `paths`, or provenance as relevant.
+- Opaque executable review: use `plugins executable-review list ID --format json`
+  to inspect the append-only review ledger. A binding authorizes only the exact
+  plugin path, native format, SHA-256, source identity, policy version, accepted
+  outcome, operator decision, and unexpired time recorded in that binding.
 - Scan-state or marketplace refresh may write cache/state or notify. Explain
   that effect and prefer a pinned marketplace commit for reproducibility.
 - Candidate scans are read-only review surfaces: a scan may write disposable Git
@@ -89,14 +93,24 @@ identity, policy, scope, reason, and consequence:
 2. Obtain explicit confirmation from a live operator in this turn.
 3. Re-read identity/state; abort if anything changed.
 4. Invoke one exact CLI command, using `--yes` and expected identity values
-   only where v0.2.1 supports them.
+   only where the current CLI supports them.
 5. Read back structured state/history and report outcome, uncertainty, and gaps.
 
 Require a human-authored reason for review actions and an exact commit, named
 rules, expiry, and visible blockers for an override. Never suppress or override
 just to clear a gate. `plugins enable` has no expected-identity or `--yes`
-backstop in v0.2.1, so disclose its residual preview-to-use race. Do not use
-native `omarchy plugin enable/update` as a fallback for a blocked OmaSafe flow.
+backstop, so disclose its residual preview-to-use race. Do not use native
+`omarchy plugin enable/update` as a fallback for a blocked OmaSafe flow.
+
+For an opaque executable review, inspect the exact current inventory digest and
+source identity first, obtain the external assessment evidence and a live
+operator decision, then run the CLI's documented `plugins executable-review add`
+command with the exact path, SHA-256, method, outcome, provider, evidence
+reference or digest, reason, expiry, expected identity fields, and `--yes`.
+This command requires an interactive terminal and is not run through the
+transport helper's stdin-disabled subprocess. Use `plugins executable-review
+revoke` in the same live, confirmed manner when evidence must no longer
+authorize a file. Never upload plugin bytes or invoke a scanner automatically.
 Schedule installation is report-only in this release because no OmaSafe-owned
 uninstall/rollback path exists.
 

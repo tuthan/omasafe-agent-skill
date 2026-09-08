@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased — v0.2.5 opaque-code review consumers
+
+- Accepted legacy enforcement v1 and current enforcement v2 reports while
+  preserving typed blockers and opaque-code items.
+- Added bounded `payload_inventory.code_exposure` transport, omission arithmetic,
+  summary reduction, and read-only executable-review ledger validation.
+- Documented the interactive, exact-identity `executable-review add|revoke`
+  boundary and extended fixtures/tests for the v0.2.5 contract.
+
 ## Unreleased — v0.2.4 report consumers
 
 - Preserved review summaries, typed coverage-gap totals, occurrence identities,

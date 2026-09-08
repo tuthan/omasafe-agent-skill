@@ -65,6 +65,33 @@ def main():
     result, _, _ = invoke("unknown-enum", "plugins", "enforcement-status", "io.example.fixture", "--format", "json")
     check(result["status"] == "unsupported", "unknown enforcement enum was accepted")
 
+    result, _, _ = invoke("v025", "plugins", "enforcement-status", "io.example.fixture", "--format", "json")
+    check(result["status"] == "ok", "v0.2.5 enforcement report should be accepted")
+    decision = result["report"]["result"]["decision"]
+    check(decision["schema"] == "omasafe.enforcement.v2" and
+          decision["blockers"] == [] and decision["opaque_code_items"] == [],
+          "enforcement v2 fields were not retained")
+    check(result["report"]["result"]["enforcement_policy"]["schema"] == "omasafe.enforcement-policy.v2",
+          "enforcement policy v2 was not accepted")
+
+    result, calls, _ = invoke(
+        "v025", "plugins", "executable-review", "list", "io.example.fixture", "--format", "json",
+    )
+    check(result["status"] == "ok" and result["report"]["result"]["reviews"][0]["status"] == "active",
+          "executable-review list report should be accepted")
+    check(calls == [["plugins", "executable-review", "list", "io.example.fixture", "--format", "json"]],
+          "executable-review list argv changed")
+
+    result, _, _ = invoke(
+        "v025", "scan-plugin", "--path", "./plugin", "--report-profile", "review", "--format", "json",
+    )
+    check(result["status"] == "ok", "v0.2.5 code-exposure review profile should be accepted")
+    check(result["analysis_summary"]["code_exposure"] == {"total": 1, "emitted": 1, "omitted": 0},
+          "code-exposure totals were not retained")
+    code_item = result["report"]["result"]["payload_inventory"]["code_exposure"][0]
+    check(code_item["opaque_review_required"] is True and code_item["native_format"] == "elf",
+          "code-exposure evidence was not retained")
+
     result, _, _ = invoke("stderr-error", "plugins", "trust", "io.example.fixture", "--yes")
     check(result["status"] == "text-error" and result["exit_code"] == 1, "text error semantics lost")
 
@@ -76,6 +103,12 @@ def main():
 
     result, _, _ = invoke("timeout", "plugins", "inventory", "--format", "json", timeout=0.1)
     check(result["status"] == "timeout" and result["transport"]["timed_out"], "timeout semantics lost")
+
+    result, calls, _ = invoke("default", "marketplace", "refresh", "--latest")
+    check(result["status"] == "ok", "marketplace refresh should remain a text-only command")
+    check(result["transport"]["timeout_seconds"] == 300.0,
+          "marketplace refresh did not receive the aggregate 300-second default")
+    check(calls == [["marketplace", "refresh", "--latest"]], "marketplace refresh argv changed")
 
     result, _, output_bytes = invoke("oversized", "scan", "--format", "json")
     check(result["status"] == "truncated", "oversized stream was not stopped")
@@ -91,6 +124,13 @@ def main():
 
     result, _, _ = invoke("text-success", "plugins", "trust", "io.example.fixture", "--yes")
     check(result["status"] == "ok" and "stdout" in result, "text-only success was parsed as JSON")
+
+    result, _, _ = invoke(
+        "text-success", "plugins", "executable-review", "add", "io.example.fixture",
+        "--path", "bin/helper", "--sha256", "c" * 64, "--yes",
+    )
+    check(result["status"] == "ok" and "stdout" in result,
+          "executable-review add was not kept text-only")
 
     request = "omarchy plugin add https://github.com/example/plugin.git --enable"
     result, calls, _ = invoke(
