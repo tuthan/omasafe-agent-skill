@@ -37,6 +37,10 @@ limitations, and an optional next step. Before the first scan, export may return
 observation. The runner validates the shape and preserves the state words; it
 does not decide whether a host is safe.
 
+Completed posture `generated_at` and `observed_at` values are UTC RFC3339
+seconds (`2026-09-08T00:00:00Z`). `result_age_seconds` is the bounded age of
+the exported report and is retained for consumer freshness handling.
+
 The executable path and `--version` response are compatibility evidence, not
 executable authenticity. A deliberately replaced binary can mimic them; the
 runner preserves that residual limitation.

@@ -161,6 +161,8 @@ Preserve every check state (`pass`, `regression`, `attention`, `informational`,
 `incomplete` and `error` are coverage loss, never a clean result. A report with
 `status: not_yet_run` establishes no observation. Keep `generated_at` and
 `result_age_seconds` with the report so stale posture is described as stale.
+Completed report timestamps are UTC RFC3339 seconds such as
+`2026-09-08T00:00:00Z`.
 
 The possible guarded first-install sequence is documented only: the operator
 runs native `omarchy plugin add` without `--enable`, the inactive staged tree is

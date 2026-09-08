@@ -4,7 +4,7 @@ description: Review Omarchy plugins with the local OmaSafe CLI, including immuta
 license: MIT
 metadata:
   author: tuthan
-  version: "1.3.0"
+  version: "1.4.0"
 ---
 
 # OmaSafe plugin review
@@ -31,10 +31,10 @@ scanner, or infer policy in ad-hoc scripts.
 ## Start every operational review
 
 1. Resolve `omasafe-cli` locally; do not download or install it implicitly.
-2. Run `--version` through `scripts/run-omasafe.py` and require version `>= 0.2.5`
+2. Run `--version` through `scripts/run-omasafe.py` and require version `>= 0.3.0`
    for current coverage and enforcement behavior. Candidate-request and
    marketplace-ID routes still require the immutable acquisition contract. A
-   pre-0.2.5 CLI may be used only for a clearly labeled legacy report; it cannot
+   pre-0.3.0 CLI may be used only for a clearly labeled legacy report; it cannot
    establish opaque-code review status or v2 enforcement. Missing, malformed, or
    incompatible output stops that route and is reported as unknown.
    PATH resolution and the self-reported version establish compatibility only;
@@ -72,6 +72,8 @@ scanner, or infer policy in ad-hoc scripts.
   `posture scan --format json` to collect current observations, and
   `posture digest --format markdown` for a support-facing summary. The first
   export may be `status: not_yet_run`; preserve that as missing observation.
+  Current posture reports require the v0.3.0 CLI contract, including UTC
+  RFC3339 timestamps and the `result_age_seconds` export field.
   `posture hook status` and `posture hook self-test` are text-only diagnostics;
   hook install/uninstall require the same live confirmation as other mutations.
 - Opaque executable review: use `plugins executable-review list ID --format json`

@@ -51,6 +51,7 @@ POSTURE_STATES = {
     "pass", "regression", "attention", "informational", "incomplete",
     "not_applicable", "error",
 }
+POSTURE_TIMESTAMP = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 ENFORCEMENT_POLICY_SCHEMA = "omasafe.enforcement-policy.v1"
 ENFORCEMENT_POLICY_SCHEMA_V2 = "omasafe.enforcement-policy.v2"
 ENFORCEMENT_SUMMARY_SCHEMA = "omasafe.enforcement-summary.v1"
@@ -423,7 +424,7 @@ def validate_posture_report(report: Any) -> str | None:
             return f"posture report missing {field}"
     if not isinstance(report.get("check_catalog_version"), int) or report["check_catalog_version"] < 1:
         return "invalid posture check catalog version"
-    if not isinstance(report.get("generated_at"), str):
+    if not isinstance(report.get("generated_at"), str) or not POSTURE_TIMESTAMP.fullmatch(report["generated_at"]):
         return "invalid posture generated_at"
     if not isinstance(report.get("host"), dict) or not isinstance(report.get("tools"), list):
         return "invalid posture host or tools"
@@ -434,6 +435,8 @@ def validate_posture_report(report: Any) -> str | None:
         if not isinstance(check, dict) or not isinstance(check.get("id"), str) or \
                 not isinstance(check.get("title"), str) or check.get("state") not in POSTURE_STATES:
             return "invalid posture check state"
+        if not isinstance(check.get("observed_at"), str) or not POSTURE_TIMESTAMP.fullmatch(check["observed_at"]):
+            return "invalid posture observed_at"
         for field in ("evidence", "dependencies", "limitations"):
             if not isinstance(check.get(field), list):
                 return f"invalid posture check {field}"
