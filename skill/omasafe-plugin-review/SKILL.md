@@ -4,7 +4,7 @@ description: Review Omarchy plugins with the local OmaSafe CLI, including immuta
 license: MIT
 metadata:
   author: tuthan
-  version: "1.2.0"
+  version: "1.3.0"
 ---
 
 # OmaSafe plugin review
@@ -25,7 +25,7 @@ scanner, or infer policy in ad-hoc scripts.
 - Read-only is the default. A quiet scan or no findings is not “safe”,
   “clean”, malware-free, or proof of trust; report coverage and limitations.
 - Refuse trust, review decisions, overrides, enable, reviewed update, schedule
-  installation, and native lifecycle bypasses in CI, headless, delegated,
+  installation or removal, and native lifecycle bypasses in CI, headless, delegated,
   unattended, or full-auto sessions.
 
 ## Start every operational review
@@ -68,6 +68,12 @@ scanner, or infer policy in ad-hoc scripts.
 - Rules and context: use `rules list`, `rules coverage`, `rules explain RULE_ID`,
   `plugins enforcement-status ID`, `plugins override list`, `schedule status`,
   `paths`, or provenance as relevant.
+- Host posture: use `posture export --format json` for the last bounded report,
+  `posture scan --format json` to collect current observations, and
+  `posture digest --format markdown` for a support-facing summary. The first
+  export may be `status: not_yet_run`; preserve that as missing observation.
+  `posture hook status` and `posture hook self-test` are text-only diagnostics;
+  hook install/uninstall require the same live confirmation as other mutations.
 - Opaque executable review: use `plugins executable-review list ID --format json`
   to inspect the append-only review ledger. A binding authorizes only the exact
   plugin path, native format, SHA-256, source identity, policy version, accepted
@@ -111,8 +117,10 @@ This command requires an interactive terminal and is not run through the
 transport helper's stdin-disabled subprocess. Use `plugins executable-review
 revoke` in the same live, confirmed manner when evidence must no longer
 authorize a file. Never upload plugin bytes or invoke a scanner automatically.
-Schedule installation is report-only in this release because no OmaSafe-owned
-uninstall/rollback path exists.
+Schedule install and uninstall are OmaSafe-owned systemd operations: inspect
+`schedule status`, preview the exact policy and units, obtain live confirmation,
+then read status back. Do not edit systemd units directly or treat uninstall as
+erasing posture history.
 
 ## Report language
 

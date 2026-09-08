@@ -25,8 +25,14 @@ bytes.
   An immediate re-read narrows but cannot close its preview-to-use race. Opaque
   review `add` and `revoke` do have interactive confirmation requirements, but
   their success remains text-only and needs structured readback.
-- `schedule install` has no matching OmaSafe uninstall/rollback command, so this
-  reports or inspects schedule state but does not install it.
+- Posture checks are bounded observations of the current host. Missing tools,
+  unsupported package contexts, interrupted commands, and unverified hook stamps
+  remain explicit `incomplete`, `error`, `not_applicable`, or `informational`
+  states; they do not establish a clean host. The report is not a runtime
+  sandbox or a malware verdict.
+- Schedule install and uninstall manage only the OmaSafe-owned user systemd
+  units. They refuse modified or incomplete units and do not erase posture
+  reports, state history, or native lifecycle bypasses.
 - OmaSafe state and cache are user-owned. They are useful audit state, not
   tamper-proof evidence after same-user compromise.
 - Local or remote analysis covers the exact bytes and analyzer coverage reported

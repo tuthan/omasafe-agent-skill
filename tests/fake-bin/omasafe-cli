@@ -299,6 +299,38 @@ if args and args[0] == "provenance":
     }))
     raise SystemExit(0)
 
+if args and args[0] == "posture":
+    if len(args) > 1 and args[1] == "hook":
+        print("hook: /tmp/omasafe-post-update\ninstalled: false")
+        raise SystemExit(0)
+    if scenario == "posture-not-yet-run":
+        print(json.dumps({
+            "schema": "omasafe.posture.v1",
+            "status": "not_yet_run",
+            "checks": [],
+            "coverage": {"complete": 0, "incomplete": 0, "errors": 0,
+                          "not_applicable": 0, "limitations": ["fixture"]},
+        }))
+        raise SystemExit(0)
+    print(json.dumps({
+        "schema": "omasafe.posture.v1",
+        "check_catalog_version": 1,
+        "generated_at": "2026-09-08T00:00:00Z",
+        "host": {"os": "fixture", "arch": "x86_64", "omarchy_version": None,
+                 "omarchy_path": None, "kernel": "fixture-kernel"},
+        "tools": [],
+        "checks": [{
+            "id": "fixture.context", "title": "Fixture context", "state": "informational",
+            "evidence": ["fixture evidence"], "observed_at": "2026-09-08T00:00:00Z",
+            "dependencies": [], "limitations": [], "next_step": None, "tool": None,
+        }],
+        "coverage": {"complete": 0, "incomplete": 0, "errors": 0,
+                      "not_applicable": 0, "limitations": []},
+        "last_observed_post_update_hook": None,
+        "result_age_seconds": 0,
+    }))
+    raise SystemExit(0)
+
 payload = report()
 if scenario in {"candidate", "local-review", "malformed-omissions"}:
     payload["tool_version"] = "0.2.2"

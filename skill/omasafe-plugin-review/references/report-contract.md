@@ -25,6 +25,18 @@ Nested enforcement policy accepts v1 for legacy reports and v2 for current repor
 The runner checks known enforcement enums (`evaluated|not-evaluated`, `allow|block`,
 `policy|override`) but does not calculate findings, severity, trust, or policy.
 
+`posture scan|export --format json` and `posture digest --format json` are a
+separate raw `omasafe.posture.v1` shape; they do not use the plugin
+`omasafe.report.v1` envelope. A completed report carries `check_catalog_version`,
+`generated_at`, `host`, `tools`, `checks`, `coverage`, and optional
+`last_observed_post_update_hook` plus `result_age_seconds`. Each check carries a
+state (`pass`, `regression`, `attention`, `informational`, `incomplete`,
+`not_applicable`, or `error`), evidence, observed time, dependencies,
+limitations, and an optional next step. Before the first scan, export may return
+`{"schema":"omasafe.posture.v1","status":"not_yet_run",...}` with no host
+observation. The runner validates the shape and preserves the state words; it
+does not decide whether a host is safe.
+
 The executable path and `--version` response are compatibility evidence, not
 executable authenticity. A deliberately replaced binary can mimic them; the
 runner preserves that residual limitation.
@@ -75,8 +87,8 @@ binding without structured enforcement/ledger readback.
 ## Text-only and exit statuses
 
 `--version`, `paths`, trust, review, review-update, override create,
-executable-review add/revoke, marketplace refresh, and schedule install are
-text-only. Bounded text is status context;
+executable-review add/revoke, marketplace refresh, schedule install/uninstall,
+and posture hook actions are text-only. Bounded text is status context;
 never parse success prose into an invented report. Mutations still require
 structured state/history readback.
 

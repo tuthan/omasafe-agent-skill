@@ -32,6 +32,11 @@ plugins enforcement-status ID --format json
 plugins executable-review list ID --format json
 plugins override list --format json
 schedule status --format json
+posture export --format json
+posture scan --format json
+posture digest --format markdown
+posture hook status
+posture hook self-test
 scan --include-analysis --format json
 ```
 
@@ -135,9 +140,27 @@ candidate first, confirm the exact commit/digest/policy, then invoke once and
 read back status. On failure, timeout, interruption, dirty state, or failed
 postconditions, inspect state and give recovery guidance; do not blindly retry.
 
-Do not execute `schedule install` in this skill release. It has no OmaSafe-owned
-uninstall or rollback companion. You may inspect `schedule status` and explain that scheduled
-scans are report-only. Do not substitute direct `systemctl` edits.
+Schedule installation and removal are live, confirmed operations. Inspect
+`schedule status`, preview the selected advisory or hardened policy and the
+OmaSafe-owned units, obtain current-turn confirmation, invoke exactly one
+`schedule install --policy POLICY` or `schedule uninstall`, and read status
+back. Never substitute direct `systemctl` edits. A successful uninstall removes
+the managed schedule; it does not erase posture reports or state history.
+
+## Host posture
+
+Posture commands describe the host-scoped checks implemented by the CLI. Use
+`posture export --format json` for a read-only last report and
+`posture scan --format json` when a fresh observation is requested. `scan` may
+write the OmaSafe-owned posture report/state and only sends desktop notifications
+when `--notify` is explicitly present. `posture digest --format markdown` is a
+bounded support summary and does not replace the JSON evidence.
+
+Preserve every check state (`pass`, `regression`, `attention`, `informational`,
+`incomplete`, `not_applicable`, or `error`) and the top-level coverage counts.
+`incomplete` and `error` are coverage loss, never a clean result. A report with
+`status: not_yet_run` establishes no observation. Keep `generated_at` and
+`result_age_seconds` with the report so stale posture is described as stale.
 
 The possible guarded first-install sequence is documented only: the operator
 runs native `omarchy plugin add` without `--enable`, the inactive staged tree is

@@ -46,6 +46,11 @@ ENFORCEMENT_SCHEMA = "omasafe.enforcement.v1"
 ENFORCEMENT_SCHEMA_V2 = "omasafe.enforcement.v2"
 OVERRIDE_SCHEMA = "omasafe.override.v1"
 SCHEDULE_SCHEMA = "omasafe.schedule.v1"
+POSTURE_SCHEMA = "omasafe.posture.v1"
+POSTURE_STATES = {
+    "pass", "regression", "attention", "informational", "incomplete",
+    "not_applicable", "error",
+}
 ENFORCEMENT_POLICY_SCHEMA = "omasafe.enforcement-policy.v1"
 ENFORCEMENT_POLICY_SCHEMA_V2 = "omasafe.enforcement-policy.v2"
 ENFORCEMENT_SUMMARY_SCHEMA = "omasafe.enforcement-summary.v1"
@@ -186,6 +191,10 @@ def is_text_only(args: list[str]) -> bool:
         return True
     if command == "schedule" and subcommand == "install":
         return True
+    if command == "schedule" and subcommand == "uninstall":
+        return True
+    if command == "posture":
+        return subcommand == "hook" or not has_json_format(args)
     return False
 
 
@@ -399,6 +408,50 @@ def validate_executable_review_list(report: dict[str, Any]) -> str | None:
     return None
 
 
+def validate_posture_report(report: Any) -> str | None:
+    """Validate the raw host posture shape without judging its states."""
+    if not isinstance(report, dict) or report.get("schema") != POSTURE_SCHEMA:
+        return "unsupported posture schema"
+    if report.get("status") == "not_yet_run":
+        checks = report.get("checks")
+        coverage = report.get("coverage")
+        if checks != [] or not isinstance(coverage, dict):
+            return "invalid not_yet_run posture report"
+        return None
+    for field in ("check_catalog_version", "generated_at", "host", "tools", "checks", "coverage"):
+        if field not in report:
+            return f"posture report missing {field}"
+    if not isinstance(report.get("check_catalog_version"), int) or report["check_catalog_version"] < 1:
+        return "invalid posture check catalog version"
+    if not isinstance(report.get("generated_at"), str):
+        return "invalid posture generated_at"
+    if not isinstance(report.get("host"), dict) or not isinstance(report.get("tools"), list):
+        return "invalid posture host or tools"
+    checks = report.get("checks")
+    if not isinstance(checks, list) or len(checks) > 4096:
+        return "invalid posture checks"
+    for check in checks:
+        if not isinstance(check, dict) or not isinstance(check.get("id"), str) or \
+                not isinstance(check.get("title"), str) or check.get("state") not in POSTURE_STATES:
+            return "invalid posture check state"
+        for field in ("evidence", "dependencies", "limitations"):
+            if not isinstance(check.get(field), list):
+                return f"invalid posture check {field}"
+    coverage = report.get("coverage")
+    if not isinstance(coverage, dict):
+        return "invalid posture coverage"
+    for field in ("complete", "incomplete", "errors", "not_applicable"):
+        value = _bounded_count(coverage.get(field))
+        if value is None:
+            return f"invalid posture coverage {field}"
+    if not isinstance(coverage.get("limitations"), list):
+        return "invalid posture coverage limitations"
+    age = report.get("result_age_seconds")
+    if age is not None and (_bounded_count(age) is None):
+        return "invalid posture result age"
+    return None
+
+
 def analysis_summary(report: dict[str, Any]) -> dict[str, Any] | None:
     result = report.get("result")
     analysis = result.get("analysis") if isinstance(result, dict) else None
@@ -464,9 +517,41 @@ def analysis_summary(report: dict[str, Any]) -> dict[str, Any] | None:
     return summary
 
 
+def posture_summary(report: dict[str, Any]) -> dict[str, Any] | None:
+    """Keep bounded posture state/coverage context beside the raw evidence."""
+    if not isinstance(report, dict) or report.get("schema") != POSTURE_SCHEMA:
+        return None
+    checks = report.get("checks") if isinstance(report.get("checks"), list) else []
+    states: dict[str, int] = {}
+    for check in checks:
+        if isinstance(check, dict) and isinstance(check.get("state"), str):
+            state = check["state"]
+            states[state] = states.get(state, 0) + 1
+    result: dict[str, Any] = {
+        "status": bounded_string(report.get("status", "complete"), 64),
+        "check_count": len(checks),
+        "states": states,
+        "coverage": compact_fields(
+            report.get("coverage"), ("complete", "incomplete", "errors", "not_applicable")
+        ),
+        "generated_at": bounded_string(report.get("generated_at", ""), 128),
+    }
+    if "result_age_seconds" in report:
+        result["result_age_seconds"] = report["result_age_seconds"]
+    host = report.get("host")
+    if isinstance(host, dict):
+        result["host"] = compact_fields(host, ("os", "arch", "omarchy_version", "kernel"))
+    return result
+
+
 def validate_report(report: Any, args: list[str]) -> tuple[bool, str | None]:
     """Validate transport shape only; never calculate security semantics."""
     command, subcommand = command_parts(args)
+    if command == "posture":
+        if subcommand not in {"scan", "export", "digest"} or not has_json_format(args):
+            return False, "unsupported posture JSON route"
+        posture_error = validate_posture_report(report)
+        return posture_error is None, posture_error
     if command == "provenance":
         if not isinstance(report, dict) or report.get("schema") != PROVENANCE_SCHEMA:
             return False, "unsupported provenance schema"
@@ -1233,6 +1318,8 @@ def make_summary(args: list[str], cli: str, timeout: float) -> dict[str, Any]:
             else:
                 summary["status"] = "error"
                 summary["stderr"] = text_from_bytes(stderr)
+            if "report" in summary and command == "posture":
+                summary["posture_summary"] = posture_summary(parsed)
     else:
         summary["status"] = "error" if code not in {0, 2} else ("ok" if code == 0 else "usage-error")
         summary["stdout"] = text_from_bytes(stdout)

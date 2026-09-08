@@ -46,6 +46,22 @@ def main():
     check(result["report"]["schema"] == "omasafe.report.v1", "report envelope missing")
     check(calls == [["plugins", "inventory", "--format", "json"]], "argv was changed")
 
+    result, calls, _ = invoke("default", "posture", "scan", "--format", "json")
+    check(result["status"] == "ok", "posture report should be accepted")
+    check(result["report"]["schema"] == "omasafe.posture.v1", "posture schema was not retained")
+    check(result["posture_summary"]["states"] == {"informational": 1},
+          "posture state summary was not retained")
+    check(calls == [["posture", "scan", "--format", "json"]], "posture argv was changed")
+
+    result, _, _ = invoke("posture-not-yet-run", "posture", "export", "--format", "json")
+    check(result["status"] == "ok" and result["posture_summary"]["status"] == "not_yet_run",
+          "pre-first-run posture state was not preserved")
+
+    result, calls, _ = invoke("default", "posture", "hook", "status")
+    check(result["status"] == "ok" and "installed: false" in result["stdout"],
+          "posture hook status should remain text-only")
+    check(calls == [["posture", "hook", "status"]], "posture hook argv was changed")
+
     result, _, _ = invoke("actionable-scan", "scan", "--format", "json")
     check(result["status"] == "actionable-report" and result["exit_code"] == 3, "scan exit 3 lost")
 
