@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased — v0.3.1 posture delta fields
+
+- Documented the three nullable per-check fields `omasafe-cli` 0.3.1 adds to
+  `omasafe.posture.v1`: `catalog_index` (the catalog's deliberate, non-alphabetical
+  order, which is not the order the `checks` array is emitted in), `previous_state`
+  (the preceding report's state; `null` means never observed twice, never
+  "unchanged", and a value equal to the current state is a real answer), and
+  `gap_open_since`.
+- Documented `review_summary.capabilities.by_class`, whose per-class `total` is the
+  pre-selection count and so stays exact under report-profile omission. Without it
+  an absent class cannot be distinguished from a class whose instances were
+  selected away, and must be reported as unknown rather than as none.
+- Recorded that pending repository and Omarchy updates report `attention` from
+  0.3.1 where earlier versions reported `regression`. The runner preserves the
+  state word the installed CLI emits and does not reclassify.
+
+No runner change: the transport already retains additive unknown fields and
+validates the schema string rather than a field allowlist, so these reports pass
+through unchanged on 0.3.0 and 0.3.1 alike.
+
 ## Unreleased — v0.2.5 opaque-code review consumers
 
 - Accepted legacy enforcement v1 and current enforcement v2 reports while

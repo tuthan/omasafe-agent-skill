@@ -41,6 +41,34 @@ Completed posture `generated_at` and `observed_at` values are UTC RFC3339
 seconds (`2026-09-08T00:00:00Z`). `result_age_seconds` is the bounded age of
 the exported report and is retained for consumer freshness handling.
 
+`omasafe-cli` 0.3.1 adds three nullable per-check fields. They are additive and
+absent on 0.3.0, so a report carrying none of them is current, not truncated.
+
+- `catalog_index` is the check's stable position in the CLI check catalog. That
+  order is deliberate and is not the alphabetical order the `checks` array is
+  emitted in; a consumer that wants the catalog's reading order sorts by this
+  field, and falls back to sorted id only when **every** check carries one.
+- `previous_state` is the state the check held in the immediately preceding
+  completed report, and `null` on its first observation. `null` means "never
+  observed twice" and never "unchanged". A value equal to the current state is a
+  real answer — the check did not change — and is not a signal that the field is
+  unpopulated.
+- `gap_open_since` is when the check's current `incomplete`/`error` episode began,
+  RFC3339, and `null` when the check is not in a coverage gap.
+
+Pending repository and Omarchy package updates report `attention` from 0.3.1;
+earlier versions reported `regression` for the same condition. `regression` is
+reserved for a check that got worse, and only from 0.3.1 does the report carry the
+previous state that claim refers to. The runner preserves whichever word the
+installed CLI emits and does not reclassify.
+
+`review_summary.capabilities.by_class` (0.3.1, `omasafe.report.v1`) mirrors
+`findings.by_rule` with `{total, emitted, omitted}` per capability class. Its
+`total` is the pre-selection count, so it stays exact when the report profile
+drops entries from `analysis.capabilities[]`. Without it, an absent class cannot
+be distinguished from a class whose instances were selected away, and absence must
+be reported as unknown rather than as none.
+
 The executable path and `--version` response are compatibility evidence, not
 executable authenticity. A deliberately replaced binary can mimic them; the
 runner preserves that residual limitation.
