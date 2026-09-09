@@ -15,6 +15,12 @@
 - Recorded that pending repository and Omarchy updates report `attention` from
   0.3.1 where earlier versions reported `regression`. The runner preserves the
   state word the installed CLI emits and does not reclassify.
+- Separated the emitted `regression` state from change established by
+  `previous_state`. The CLI assigns `regression` to defects it detects — known
+  package vulnerabilities, a world-writable `PATH` entry — on a check's first and
+  every unchanged observation, so the state word alone is evidence that the
+  condition is present and says nothing about deterioration. Change is established
+  only by `previous_state` differing from `state`, and only when it is non-null.
 
 No runner change: the transport already retains additive unknown fields and
 validates the schema string rather than a field allowlist, so these reports pass

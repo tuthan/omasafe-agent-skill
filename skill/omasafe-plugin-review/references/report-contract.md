@@ -46,8 +46,9 @@ absent on 0.3.0, so a report carrying none of them is current, not truncated.
 
 - `catalog_index` is the check's stable position in the CLI check catalog. That
   order is deliberate and is not the alphabetical order the `checks` array is
-  emitted in; a consumer that wants the catalog's reading order sorts by this
-  field, and falls back to sorted id only when **every** check carries one.
+  emitted in. Sort by this field **only when every check carries a valid index**;
+  if any check is missing one, fall back to sorted id for the whole report rather
+  than interleaving two orderings.
 - `previous_state` is the state the check held in the immediately preceding
   completed report, and `null` on its first observation. `null` means "never
   observed twice" and never "unchanged". A value equal to the current state is a
@@ -56,11 +57,21 @@ absent on 0.3.0, so a report carrying none of them is current, not truncated.
 - `gap_open_since` is when the check's current `incomplete`/`error` episode began,
   RFC3339, and `null` when the check is not in a coverage gap.
 
+**`regression` is an emitted state, not a claim that anything changed.** The CLI
+assigns it to conditions it considers defects — known package vulnerabilities, a
+world-writable `PATH` entry — and it assigns them on a check's FIRST observation
+and on every unchanged observation after it. A `regression` state on its own is
+evidence that the condition is present, and says nothing about whether the host
+deteriorated. Do not report deterioration from the state word.
+
+Change is established only by comparing `state` with `previous_state`, and only
+when `previous_state` is non-null: `previous_state` differing from `state` is the
+only evidence in the report that something moved. On 0.3.0, which carries no
+`previous_state` at all, no change can be established from a single report.
+
 Pending repository and Omarchy package updates report `attention` from 0.3.1;
-earlier versions reported `regression` for the same condition. `regression` is
-reserved for a check that got worse, and only from 0.3.1 does the report carry the
-previous state that claim refers to. The runner preserves whichever word the
-installed CLI emits and does not reclassify.
+earlier versions reported `regression` for the same condition. The runner preserves
+whichever word the installed CLI emits and does not reclassify.
 
 `review_summary.capabilities.by_class` (0.3.1, `omasafe.report.v1`) mirrors
 `findings.by_rule` with `{total, emitted, omitted}` per capability class. Its
