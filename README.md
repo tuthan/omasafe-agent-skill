@@ -1,14 +1,18 @@
 # OmaSafe Agent Skill
 
-Portable Agent Skills package for reviewing Omarchy plugins through the local
-OmaSafe CLI. It supports Codex, Cursor, OpenCode, Claude Code, and compatible
-hosts through one canonical skill directory.
+> Review what a plugin can do before it touches your shell.
 
-The skill improves review and safer operation, including v0.2.2 read-only
-candidate scans, v0.2.4 omission-aware transport, and v0.2.5 opaque-code review
-evidence and v2 enforcement decisions;
-it does not claim that a plugin or machine is safe. OmaSafe is
-not a sandbox, antivirus product, malware oracle, or replacement for human review.
+Portable Agent Skills package for reviewing Omarchy plugins through the local
+OmaSafe CLI. Version 1.4.0 supports Codex, Cursor, OpenCode, Claude Code, and
+compatible hosts through one canonical skill directory. It requires a local
+`omasafe-cli` at version 0.3.0 or newer; installing the skill does not install
+the CLI or an Omarchy target.
+
+The skill covers v0.2.2 read-only candidate scans, v0.2.4 omission-aware
+transport, v0.2.5 opaque-code review evidence and v2 enforcement decisions, and
+the additive v0.3.1 posture and capability fields. It does not claim that a
+plugin or machine is safe. OmaSafe is not a sandbox, antivirus product, malware
+oracle, or replacement for human review.
 
 ## Contents
 
