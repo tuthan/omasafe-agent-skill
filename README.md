@@ -16,10 +16,10 @@ not a sandbox, antivirus product, malware oracle, or replacement for human revie
   optional Codex metadata, and the bounded `omasafe-cli` transport.
 - `adapters/` — offline, exact-target copy/symlink install and uninstall helpers.
 - `tests/` — disposable fake-CLI, structural, runner, installer, and integrity checks.
-- `docs/architecture.md`, `docs/implementation-plan.md`, and
-  `docs/test-matrix.md` — contract and acceptance plan.
-- `docs/source-map.md` — command and semantic claim provenance.
-- `docs/self-review.md` — bundled-code, network, permission, and limitation review.
+- `../omasafe-docs/Skill/architecture.md`, `../omasafe-docs/Skill/implementation-plan.md`, and
+  `../omasafe-docs/Skill/test-matrix.md` — contract and acceptance plan.
+- `../omasafe-docs/Skill/source-map.md` — command and semantic claim provenance.
+- `../omasafe-docs/Skill/self-review.md` — bundled-code, network, permission, and limitation review.
 - `SHA256SUMS` — deterministic release integrity manifest.
 
 ## Install

@@ -11,8 +11,6 @@ def release_paths(root: Path) -> list[Path]:
         root / "README.md",
         root / "LICENSE",
         root / "CHANGELOG.md",
-        root / "docs/source-map.md",
-        root / "docs/self-review.md",
         root / "adapters/install.sh",
         root / "adapters/uninstall.sh",
     ]
