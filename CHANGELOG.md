@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.4.1 — 2026-09-13
+
+- Updated the skill release for the OmaSafe CLI 0.3.2 review-only contract.
+- Denied mutation and lifecycle routes before the CLI is spawned, with bounded
+  minimal evidence by default and explicit untrusted detail opt-in.
+- Added the pinned OpenCode review-host bundle and source-checkout launcher
+  guidance; no prompt-injection detector or OS sandbox is implied.
+
 ## Unreleased — v0.3.1 posture delta fields
 
 - Documented the three nullable per-check fields `omasafe-cli` 0.3.1 adds to

@@ -4,7 +4,7 @@ description: Review Omarchy plugins with the local OmaSafe CLI, including immuta
 license: MIT
 metadata:
   author: tuthan
-  version: "1.4.0"
+  version: "1.4.1"
 ---
 
 # OmaSafe plugin review

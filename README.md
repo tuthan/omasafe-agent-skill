@@ -3,7 +3,7 @@
 > Review what a plugin can do before it touches your shell.
 
 Portable Agent Skills package for reviewing Omarchy plugins through the local
-OmaSafe CLI. Version 1.4.0 supports Codex, Cursor, OpenCode, Claude Code, and
+OmaSafe CLI. Version 1.4.1 supports Codex, Cursor, OpenCode, Claude Code, and
 compatible hosts through one canonical skill directory. It requires a local
 `omasafe-cli` at version 0.3.2 or newer; installing the skill does not install
 the CLI or an Omarchy target.
