@@ -1,6 +1,6 @@
 # Known limitations and residual risks
 
-The v0.2.2 candidate route is a read-only Git acquisition and analysis path. It
+The v0.3.2 candidate route is a read-only Git acquisition and analysis path. It
 does not support archives, registry coordinates, private repositories, or native
 installation interposition. The CLI resolves a moving GitHub default branch to
 one exact commit, but a later native install from the same URL may select a
@@ -17,11 +17,11 @@ bytes.
 - Plugin lifecycle can be reached through native commands and shell IPC. OmaSafe
   does not claim to interpose those bypasses. First-install inactive staging has
   an inotify observation window; a review is not first-install enforcement.
-- Hardened policy v0.2.5 checks coverage, freshness, unsupported executable
+- Hardened policy v0.3.2 checks coverage, freshness, unsupported executable
   handling, opaque-code review bindings, and installed-tree postconditions. A
   matching accepted review is exact-path/digest/policy/identity evidence, not a
   comprehensive malicious-code verdict.
-- `plugins enable` still has no `--yes` or expected-identity arguments in v0.2.5.
+- `plugins enable` still has no `--yes` or expected-identity arguments in v0.3.2.
   An immediate re-read narrows but cannot close its preview-to-use race. Opaque
   review `add` and `revoke` do have interactive confirmation requirements, but
   their success remains text-only and needs structured readback.
@@ -60,3 +60,7 @@ bytes.
   with ordered finding and opaque-code boundaries, severity/location/message
   evidence, bounded coverage limitations, a fingerprint, and explicit
   CLI/transport omission arithmetic. Neither state is complete analysis.
+- The runner is review-only. Its exact argv classifier denies mutations,
+  marketplace refresh, notifications, unknown routes, and unsupported options
+  before any CLI child is spawned. This is a process boundary, not an OS
+  sandbox; the CLI and analyzer still run with the caller's permissions.

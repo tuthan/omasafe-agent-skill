@@ -127,9 +127,29 @@ uses the same report envelope and is read-only. `add` and `revoke` remain
 interactive text-only mutations; success prose is never treated as a review
 binding without structured enforcement/ledger readback.
 
-## Text-only and exit statuses
+## Runner authorization and text-only exit statuses
 
-`--version`, `paths`, trust, review, review-update, override create,
+Before capture, the runner classifies the complete argv against an exact
+review-only allowlist. It spawns no CLI for mutations or unsupported input and
+returns `status: denied`, `reason_code: mutation-not-supported`, and
+`exit_code: null`. This covers trust/review decisions, enable, reviewed update,
+override creation, executable-review add/revoke, schedule changes, hook
+installation/removal, marketplace refresh, `--notify`, unknown commands,
+duplicate/conflicting options, and caller-controlled executable/environment
+overrides. `--yes`, an approval token, and a TTY cannot change that result.
+
+Successful calls use a fixed minimal projection by default: typed identities,
+hashes, enums, counts, omission arithmetic, and the fixed limitation
+“No OS containment; source text and scanner inputs remain untrusted.” Raw paths,
+URLs, descriptions, excerpts, arbitrary keys, and stderr are omitted. The
+optional `--bounded-evidence` mode exposes only the existing bounded,
+schema-validated evidence and labels it untrusted; it cannot grant permissions.
+
+Managed scans may write OmaSafe cache/state, and that fact is disclosed in the
+minimal projection. Marketplace refresh is not an allowed runner operation;
+an operator must refresh and reverify the catalog before an ID scan.
+
+When run directly, `--version`, `paths`, trust, review, review-update, override create,
 executable-review add/revoke, marketplace refresh, schedule install/uninstall,
 and posture hook actions are text-only. Bounded text is status context;
 never parse success prose into an invented report. Mutations still require
@@ -148,9 +168,8 @@ structured state/history readback.
 
 The `scan` and `scan-plugin` commands have a 4 MiB cap per raw stream. Every other
 command has a 2 MiB cap per raw stream. Remote candidate routes default to a
-120-second timeout; marketplace refresh defaults to a 300-second aggregate
-timeout because `--latest` can run several sequential Git operations; local/other
-routes default to 30 seconds. The emitted structured summary is at most 64 KiB.
+120-second timeout; local/other routes default to 30 seconds. The emitted
+structured summary is at most 64 KiB.
 Analyzer summaries retain declared totals and omission counts for coverage and
 opaque-code rows. If a valid structured report would exceed that final cap,
 the runner emits `status: summary-reduced`, sets `transport.summary_reduced`,

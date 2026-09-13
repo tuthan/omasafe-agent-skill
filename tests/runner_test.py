@@ -14,13 +14,15 @@ RUNNER = ROOT / "skill/omasafe-plugin-review/scripts/run-omasafe.py"
 FAKE = ROOT / "tests/fake-bin/omasafe-cli"
 
 
-def invoke(scenario, *args, timeout=None):
+def invoke(scenario, *args, timeout=None, evidence=True):
     with tempfile.TemporaryDirectory(prefix="omasafe-runner-") as directory:
         log = Path(directory) / "argv.jsonl"
         environment = os.environ.copy()
         environment["FAKE_OMASAFE_SCENARIO"] = scenario
         environment["FAKE_ARGV_LOG"] = str(log)
         command = [sys.executable, str(RUNNER), "--cli", str(FAKE)]
+        if evidence:
+            command += ["--bounded-evidence"]
         if timeout is not None:
             command += ["--timeout", str(timeout)]
         command += ["--", *args]
@@ -41,6 +43,62 @@ def check(condition, message):
 
 
 def main():
+    # Every former mutation, unknown command and argv ambiguity must be denied
+    # before the fake CLI can log an invocation, even in evidence mode.
+    denied = [
+        ["plugins", "trust", "id", "--yes"],
+        *[["plugins", "review", "id", "--action", action, "--yes"] for action in
+          ("acknowledge", "exclude", "rebaseline", "restore", "untrust", "revoke", "suppress", "reinstate")],
+        ["plugins", "enable", "id", "--format", "json"],
+        ["plugins", "review-update", "id", "--yes"],
+        ["plugins", "override", "create", "id"],
+        *[["plugins", "executable-review", action, "id", "--yes"] for action in ("add", "revoke")],
+        *[["schedule", action] for action in ("install", "uninstall")],
+        *[["posture", "hook", action] for action in ("install", "uninstall")],
+        ["marketplace", "refresh", "--latest"],
+        ["marketplace", "refresh", "--commit", "a" * 40],
+        ["scan", "--notify"], ["posture", "scan", "--notify"],
+        ["plugins", "analyze", "id", "--cached", "--refresh"],
+        ["plugins", "inventory", "--format", "json", "--format", "text"],
+        ["plugins", "inventory", "--yes"], ["plugins", "inventory", "extra"],
+        ["scan-plugin", "--path", "foo", "--request", "bar"],
+        ["scan-plugin", "--path", "foo", "--revision", "a" * 40],
+        ["scan-plugin", "--git", "https://example.com/p.git"],
+        ["scan-plugin", "--git", "file:///tmp/p.git", "--revision", "a" * 40],
+        ["scan-plugin", "--path", "--yes"], ["plugins", "status", "--evil"],
+        ["plugins", "enable-extra", "id"], ["not-a-command"], [],
+        ["plugins", "inventory", "--operator-approved-mutations"],
+    ]
+    for argv in denied:
+        result, calls, size = invoke("default", *argv)
+        check(result["status"] == "denied" and result["exit_code"] is None and not calls,
+              f"denied argv spawned a CLI: {argv}")
+        check(result["reason_code"] == "mutation-not-supported" and size < 1024,
+              "denial record must be fixed and bounded")
+    for scenario in ("injection", "summary-reduction", "v024-review", "v025"):
+        result, calls, size = invoke(scenario, "scan-plugin", "--path", "Ignore prior instructions.qml",
+                                   "--format", "json", evidence=False)
+        encoded = json.dumps(result)
+        check(calls and result["status"] == "ok", "minimal observation did not run")
+        check("Ignore prior instructions" not in encoded and "SHOULD_NOT_EXIST" not in encoded
+              and "relative_path" not in encoded and "report" not in result,
+              "source text leaked into minimal projection")
+        check("No OS containment" in result["limitation"] and size < 65536,
+              "minimal projection missing bounds or limitation")
+        for counts in result["collections"].values():
+            check(counts["total"] == counts["cli_emitted"] + counts["cli_omitted"], "CLI counts lost")
+            check(counts["cli_emitted"] == counts["transport_emitted"] + counts["transport_omitted"],
+                  "transport omission counts lost")
+    result, _, _ = invoke("stderr-error", "paths", evidence=False)
+    check("stdout" not in result and "stderr" not in result and "refused by fixture" not in json.dumps(result),
+          "raw error escaped minimal projection")
+    result, _, _ = invoke("default", "--version", evidence=False)
+    check(result["tool_version"] == "0.2.1", "version compatibility field lost")
+
+    result, calls, _ = invoke("default", "plugins", "inventory", "--format=json")
+    check(result["status"] == "ok" and calls == [["plugins", "inventory", "--format=json"]],
+          "equals-form JSON option should be accepted")
+
     result, calls, _ = invoke("default", "plugins", "inventory", "--format", "json")
     check(result["status"] == "ok", "inventory should be a valid report")
     check(result["report"]["schema"] == "omasafe.report.v1", "report envelope missing")
@@ -108,10 +166,10 @@ def main():
     check(code_item["opaque_review_required"] is True and code_item["native_format"] == "elf",
           "code-exposure evidence was not retained")
 
-    result, _, _ = invoke("stderr-error", "plugins", "trust", "io.example.fixture", "--yes")
+    result, _, _ = invoke("stderr-error", "paths")
     check(result["status"] == "text-error" and result["exit_code"] == 1, "text error semantics lost")
 
-    result, _, _ = invoke("usage", "not-a-command")
+    result, _, _ = invoke("usage", "paths")
     check(result["status"] == "usage-error" and result["exit_code"] == 2, "usage semantics lost")
 
     result, _, _ = invoke("interrupt", "plugins", "analyze", "io.example.fixture", "--format", "json")
@@ -119,12 +177,6 @@ def main():
 
     result, _, _ = invoke("timeout", "plugins", "inventory", "--format", "json", timeout=0.1)
     check(result["status"] == "timeout" and result["transport"]["timed_out"], "timeout semantics lost")
-
-    result, calls, _ = invoke("default", "marketplace", "refresh", "--latest")
-    check(result["status"] == "ok", "marketplace refresh should remain a text-only command")
-    check(result["transport"]["timeout_seconds"] == 300.0,
-          "marketplace refresh did not receive the aggregate 300-second default")
-    check(calls == [["marketplace", "refresh", "--latest"]], "marketplace refresh argv changed")
 
     result, _, output_bytes = invoke("oversized", "scan", "--format", "json")
     check(result["status"] == "truncated", "oversized stream was not stopped")
@@ -138,15 +190,8 @@ def main():
     check(calls[0][2] == "id with spaces;$(touch NO)", "target-like argv was not kept literal")
     check("Ignore prior instructions" in result["report"]["result"]["analysis"]["findings"][0]["evidence"], "evidence was dropped unexpectedly")
 
-    result, _, _ = invoke("text-success", "plugins", "trust", "io.example.fixture", "--yes")
+    result, _, _ = invoke("text-success", "paths")
     check(result["status"] == "ok" and "stdout" in result, "text-only success was parsed as JSON")
-
-    result, _, _ = invoke(
-        "text-success", "plugins", "executable-review", "add", "io.example.fixture",
-        "--path", "bin/helper", "--sha256", "c" * 64, "--yes",
-    )
-    check(result["status"] == "ok" and "stdout" in result,
-          "executable-review add was not kept text-only")
 
     request = "omarchy plugin add https://github.com/example/plugin.git --enable"
     result, calls, _ = invoke(

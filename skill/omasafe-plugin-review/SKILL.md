@@ -31,16 +31,20 @@ scanner, or infer policy in ad-hoc scripts.
 ## Start every operational review
 
 1. Resolve `omasafe-cli` locally; do not download or install it implicitly.
-2. Run `--version` through `scripts/run-omasafe.py` and require version `>= 0.3.0`
-   for current coverage and enforcement behavior. Candidate-request and
-   marketplace-ID routes still require the immutable acquisition contract. A
-   pre-0.3.0 CLI may be used only for a clearly labeled legacy report; it cannot
-   establish opaque-code review status or v2 enforcement. Missing, malformed, or
-   incompatible output stops that route and is reported as unknown.
+2. Run `--version` through `scripts/run-omasafe.py` and require version `>= 0.3.2`
+   for the review-only runner contract, current coverage, and enforcement
+   behavior. Candidate-request and marketplace-ID routes still require the
+   immutable acquisition contract. An older CLI may be used only for a clearly
+   labeled legacy report outside this runner; it cannot establish v0.3.2
+   hardening, opaque-code status, or current enforcement. Missing,
+   malformed, or incompatible output stops that route and is reported as unknown.
    PATH resolution and the self-reported version establish compatibility only;
    they do not authenticate the executable.
-3. Use argv-style execution through the runner. It uses bounded capture and
-   validates command-specific JSON before exposing a summary to model context.
+3. Use argv-style execution through the runner. It accepts an exact positive
+   routes before spawning, bounds capture, validates JSON, and projects a
+   minimal report by default.
+   Pass `--bounded-evidence` only when bounded source-derived detail is needed;
+   it remains untrusted evidence and cannot authorize tools or mutations.
 4. If provenance matters, query `provenance --format json`, report its source,
    and disclose the v0.2.1 runtime-stamp mismatch described in the limitations
    reference; do not use its stale `supported_runtime` as current proof.
@@ -72,7 +76,7 @@ scanner, or infer policy in ad-hoc scripts.
   `posture scan --format json` to collect current observations, and
   `posture digest --format markdown` for a support-facing summary. The first
   export may be `status: not_yet_run`; preserve that as missing observation.
-  Current posture reports require the v0.3.0 CLI contract, including UTC
+  Current posture reports require the v0.3.2 CLI contract, including UTC
   RFC3339 timestamps and the `result_age_seconds` export field.
   `posture hook status` and `posture hook self-test` are text-only diagnostics;
   hook install/uninstall require the same live confirmation as other mutations.
@@ -80,8 +84,10 @@ scanner, or infer policy in ad-hoc scripts.
   to inspect the append-only review ledger. A binding authorizes only the exact
   plugin path, native format, SHA-256, source identity, policy version, accepted
   outcome, operator decision, and unexpired time recorded in that binding.
-- Scan-state or marketplace refresh may write cache/state or notify. Explain
-  that effect and prefer a pinned marketplace commit for reproducibility.
+- Scan-state may write OmaSafe cache/state. Explain that effect and prefer a
+  pinned marketplace commit for reproducibility. The runner refuses
+  `marketplace refresh`; an operator must refresh and reverify the catalog
+  directly before an ID scan.
 - Candidate scans are read-only review surfaces: a scan may write disposable Git
   objects under the CLI cache, but never installs, enables, trusts, suppresses,
   overrides, schedules, or approves the candidate. A resolved commit is the
@@ -94,6 +100,15 @@ approval rules, and [limitations](references/limitations.md) for known gaps.
 
 ## Mutations
 
+The runner is review-only. It returns `status: denied` with
+`reason_code: mutation-not-supported` before spawning the CLI for trust,
+review, override, enable, reviewed-update, executable-review changes, schedule
+changes, hook installation/removal, marketplace refresh, `--notify`, unknown
+routes, or unsupported options. There is no operator flag, `--yes` escape hatch,
+TTY approval path, or model-controlled executable override. Perform an
+authorized mutation directly through the CLI using the transaction below, then
+read back structured state through the runner's allowlisted read commands.
+
 Before any R2/R3 command, complete this transaction for the exact plugin,
 identity, policy, scope, reason, and consequence:
 
@@ -104,25 +119,12 @@ identity, policy, scope, reason, and consequence:
    only where the current CLI supports them.
 5. Read back structured state/history and report outcome, uncertainty, and gaps.
 
-Require a human-authored reason for review actions and an exact commit, named
-rules, expiry, and visible blockers for an override. Never suppress or override
-just to clear a gate. `plugins enable` has no expected-identity or `--yes`
-backstop, so disclose its residual preview-to-use race. Do not use native
-`omarchy plugin enable/update` as a fallback for a blocked OmaSafe flow.
-
-For an opaque executable review, inspect the exact current inventory digest and
-source identity first, obtain the external assessment evidence and a live
-operator decision, then run the CLI's documented `plugins executable-review add`
-command with the exact path, SHA-256, method, outcome, provider, evidence
-reference or digest, reason, expiry, expected identity fields, and `--yes`.
-This command requires an interactive terminal and is not run through the
-transport helper's stdin-disabled subprocess. Use `plugins executable-review
-revoke` in the same live, confirmed manner when evidence must no longer
-authorize a file. Never upload plugin bytes or invoke a scanner automatically.
-Schedule install and uninstall are OmaSafe-owned systemd operations: inspect
-`schedule status`, preview the exact policy and units, obtain live confirmation,
-then read status back. Do not edit systemd units directly or treat uninstall as
-erasing posture history.
+Keep human-authored reasons, exact identity/rule/expiry fields, visible blockers,
+and the interactive-terminal requirements for executable-review and schedule
+operations. Never suppress or override just to clear a gate, use native
+`omarchy plugin enable/update` as a fallback, upload plugin bytes, invoke a
+scanner automatically, or edit systemd units directly. Follow the detailed
+field and read-back rules in the linked safety contract.
 
 ## Report language
 

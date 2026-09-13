@@ -16,7 +16,7 @@ if log_path:
 scenario = os.environ.get("FAKE_OMASAFE_SCENARIO", "default")
 
 if args in ([], ["--version"], ["-V"]):
-    print("omasafe-cli 0.2.5" if scenario == "v025" else "omasafe-cli 0.2.1")
+    print("omasafe-cli 0.3.2" if scenario == "v025" else "omasafe-cli 0.2.1")
     raise SystemExit(0)
 
 if scenario == "stderr-error":
@@ -166,8 +166,6 @@ def report():
             result = {"plugin_id": "io.example.fixture", "decision": enforcement()}
             if scenario == "v025":
                 result["enforcement_policy"] = {"schema": "omasafe.enforcement-policy.v2"}
-        elif subcommand == "enable":
-            result = {"plugin_id": "io.example.fixture", "enabled": True, "decision": enforcement()}
         elif subcommand == "analyze":
             result = {"plugin_id": "io.example.fixture", "analysis": analysis()}
         elif subcommand == "override" and len(args) > 2 and args[2] == "list":
@@ -332,12 +330,8 @@ if args and args[0] == "posture":
     raise SystemExit(0)
 
 payload = report()
-if scenario in {"candidate", "local-review", "malformed-omissions"}:
-    payload["tool_version"] = "0.2.2"
-elif scenario == "v024-review":
-    payload["tool_version"] = "0.2.4"
-elif scenario == "v025":
-    payload["tool_version"] = "0.2.5"
+if scenario in {"candidate", "local-review", "malformed-omissions", "v024-review", "v025"}:
+    payload["tool_version"] = "0.3.2"
 print(json.dumps(payload))
 if scenario == "actionable-scan" and args and args[0] == "scan":
     raise SystemExit(3)

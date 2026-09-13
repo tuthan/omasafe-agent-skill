@@ -6,10 +6,11 @@ identity, analysis, policy, state, and lifecycle semantics.
 ## Environment
 
 Run `omasafe-cli --version` first through `scripts/run-omasafe.py --`. Require
-`0.2.5` or newer for current coverage, v2 enforcement, and executable-review
-status. Candidate-request, marketplace-ID, and local review-profile routes still
-require their immutable/report-profile contracts. Do not run operational commands
-after a missing, malformed, or older result. `paths` is read-only text. Use
+`0.3.2` or newer for the review-only runner contract, current coverage, v2
+enforcement, and executable-review status. Candidate-request, marketplace-ID,
+and local review-profile routes still require their immutable/report-profile
+contracts. Do not run operational commands after a missing, malformed, or older
+result. `paths` is read-only text. Use
 `provenance --format json` when binary provenance is relevant, but attribute it
 to that binary and disclose the runtime-stamp discrepancy in the limitations reference.
 
@@ -47,15 +48,16 @@ bytes under `DIR`; it does not execute or validate future runtime behavior.
 
 Remote review is a separate network/cache operation. Require an immutable
 commit with `--git URL --revision COMMIT`. A branch, moving tag, or “latest” is
-not an approval basis. `marketplace refresh --commit COMMIT` is reproducible;
-`--latest` is intentionally moving and must be requested explicitly. The
-refresh can take several minutes because it resolves the current HEAD, fetches
-the pinned commit, verifies the cached history, and reads the catalog; the
-runner therefore gives it a 300-second aggregate timeout.
+not an approval basis. `marketplace refresh` is operator-only: the runner
+refuses both `--commit` and `--latest`, so refresh and reverify the catalog
+directly before an ID scan.
 
 For a bounded local review, use `scan-plugin --path DIR --report-profile review
 --format json`. This route validates the review profile and its omission
-arithmetic but has no remote acquisition or candidate-suppression fields.
+arithmetic but has no remote acquisition or candidate-suppression fields. The
+runner emits a fixed minimal projection by default. Add `--bounded-evidence`
+only for bounded untrusted detail from the same invocation; it cannot authorize
+a tool or mutation.
 
 ## Candidate source review
 
@@ -93,6 +95,14 @@ and explicit CLI/transport omission arithmetic; it is not a complete report.
 Raw `truncated` is a separate stream-overflow state.
 
 ## R2 trust and review decisions
+
+The transport helper refuses every mutation before process creation, including
+trust, review, override creation, enable, reviewed update, executable-review
+add/revoke, schedule changes, hook install/uninstall, marketplace refresh, and
+`--notify`. It also refuses unknown commands, duplicate/conflicting options,
+non-HTTPS Git selectors, and operator-approval flags. There is no TTY, `--yes`,
+or model-controlled executable escape hatch in the runner. The following
+transaction applies only when an operator runs the CLI directly.
 
 For trust, acknowledge, rebaseline, restore, untrust/revoke, exclude,
 suppress/reinstate, and override creation:

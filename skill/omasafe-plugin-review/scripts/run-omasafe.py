@@ -59,14 +59,11 @@ AUDIT_SCHEMA = "omasafe.enforcement-audit.v1"
 ACQUISITION_SCHEMA = "omasafe.acquisition.v1"
 EXECUTABLE_REVIEW_SCHEMA = "omasafe.executable-review.v1"
 EXECUTABLE_REVIEW_POLICY_SCHEMA = "omasafe.executable-review-policy.v1"
-REMOTE_CANDIDATE_MIN = (0, 2, 2)
-REVIEW_PROFILE_MIN = (0, 2, 2)
-EXECUTABLE_REVIEW_MIN = (0, 2, 5)
+RUNNER_MIN = (0, 3, 2)
+REMOTE_CANDIDATE_MIN = RUNNER_MIN
+REVIEW_PROFILE_MIN = RUNNER_MIN
+EXECUTABLE_REVIEW_MIN = RUNNER_MIN
 REMOTE_TIMEOUT = 120.0
-# `marketplace refresh --latest` can run several sequential bounded Git
-# operations, so it needs an aggregate transport budget rather than the
-# ordinary 30-second local-command default.
-MARKETPLACE_REFRESH_TIMEOUT = 300.0
 
 
 def bounded_string(value: Any, limit: int = STRING_CAP) -> str:
@@ -129,10 +126,6 @@ def is_remote_candidate(args: list[str]) -> bool:
     return is_scan_plugin(args) and any(has_arg(args, name) for name in ("--git", "--request", "--marketplace"))
 
 
-def is_marketplace_refresh(args: list[str]) -> bool:
-    return command_parts(args) == ("marketplace", "refresh")
-
-
 def is_executable_review(args: list[str]) -> bool:
     return command_parts(args)[0] == "plugins executable-review"
 
@@ -171,32 +164,111 @@ def redact_args(args: list[str]) -> list[str]:
 
 
 def has_json_format(args: list[str]) -> bool:
-    try:
-        index = args.index("--format")
-    except ValueError:
-        return False
-    return index + 1 < len(args) and args[index + 1] == "json"
+    for index, item in enumerate(args):
+        if item == "--format":
+            return index + 1 < len(args) and args[index + 1] == "json"
+        if item.startswith("--format="):
+            return item[len("--format="):] == "json"
+    return False
 
 
 def is_text_only(args: list[str]) -> bool:
-    command, subcommand = command_parts(args)
-    if command in {"--version", "-V", "paths", "marketplace"}:
-        return True
-    if command == "provenance":
-        return not has_json_format(args)
-    if command in {"plugins trust", "plugins review", "plugins review-update"}:
-        return True
-    if command == "plugins executable-review":
-        return subcommand in {"add", "revoke"} or not has_json_format(args)
-    if command == "plugins override" and subcommand == "create":
-        return True
-    if command == "schedule" and subcommand == "install":
-        return True
-    if command == "schedule" and subcommand == "uninstall":
-        return True
-    if command == "posture":
-        return subcommand == "hook" or not has_json_format(args)
-    return False
+    return not has_json_format(args)
+
+
+# This is an authorization parser, separate from report validation. Only the
+# canonical space-separated CLI spelling is accepted. Never forward unknown
+# flags, extra positionals, aliases, or duplicate flags to a permissive CLI.
+JSON_FORMAT = {"--format": {"text", "json"}}
+SEVERITIES = {"info", "low", "medium", "high", "critical"}
+REVIEW_ROUTES = {
+    ("--version",): (0, 0, {}),
+    ("-V",): (0, 0, {}),
+    ("paths",): (0, 0, {}),
+    ("provenance",): (0, 0, JSON_FORMAT),
+    ("scan",): (0, 0, {**JSON_FORMAT, "--only-new": False, "--include-analysis": False}),
+    ("scan-cache", "show"): (0, 0, {**JSON_FORMAT, "--validate": False,
+        "--profile": {"installed-basic", "installed-analysis"}}),
+    ("scan-plugin",): (0, 0, {**JSON_FORMAT, "--path": None, "--git": None,
+        "--revision": None, "--request": None, "--marketplace": None,
+        "--plugin-id": None, "--report-profile": {"full", "review"}, "--fail-on": SEVERITIES}),
+    ("plugins", "inventory"): (0, 0, JSON_FORMAT),
+    ("plugins", "status"): (1, 1, JSON_FORMAT),
+    ("plugins", "diff"): (1, 1, JSON_FORMAT),
+    ("plugins", "enforcement-status"): (1, 1, JSON_FORMAT),
+    ("plugins", "executable-review", "list"): (1, 1, JSON_FORMAT),
+    ("plugins", "override", "list"): (0, 0, JSON_FORMAT),
+    ("plugins", "analyze"): (1, 1, {**JSON_FORMAT, "--refresh": False,
+        "--cached": False, "--fail-on": SEVERITIES}),
+    ("rules", "list"): (0, 0, JSON_FORMAT),
+    ("rules", "coverage"): (0, 0, JSON_FORMAT),
+    ("rules", "explain"): (1, 1, JSON_FORMAT),
+    ("schedule", "status"): (0, 0, JSON_FORMAT),
+    **{("posture", action): (0, 0, {"--format": {"text", "json", "markdown"}})
+       for action in ("scan", "export", "digest")},
+    ("posture", "hook", "status"): (0, 0, {}),
+    ("posture", "hook", "self-test"): (0, 0, {}),
+}
+LIMITATION = "No OS containment; source text and scanner inputs remain untrusted."
+
+
+def classify_review(args: list[str]) -> tuple[str, bool] | None:
+    if not args or len(args) > ARGV_COUNT_CAP or any(
+        not isinstance(arg, str) or not arg or len(arg) > 16384 or "\x00" in arg for arg in args
+    ):
+        return None
+    route = next((key for key in REVIEW_ROUTES if tuple(args[:len(key)]) == key), None)
+    if route is None:
+        return None
+    minimum, maximum, options = REVIEW_ROUTES[route]
+    positionals = []
+    seen = {}
+    index = len(route)
+    while index < len(args):
+        arg = args[index]
+        if arg.startswith("-"):
+            option, equals, inline_value = (arg.partition("="))
+            if option not in options or option in seen:
+                return None
+            allowed = options[option]
+            if allowed is False:
+                if equals:
+                    return None
+                seen[option] = True
+            else:
+                if equals:
+                    value = inline_value
+                    if not value:
+                        return None
+                else:
+                    index += 1
+                    if index >= len(args):
+                        return None
+                    value = args[index]
+                    if value.startswith("-"):
+                        return None
+                if isinstance(allowed, set) and value not in allowed:
+                    return None
+                seen[option] = value
+        else:
+            positionals.append(arg)
+        index += 1
+    if not minimum <= len(positionals) <= maximum:
+        return None
+    if "--refresh" in seen and "--cached" in seen:
+        return None
+    if route == ("scan-plugin",):
+        selectors = set(seen) & {"--path", "--git", "--request", "--marketplace"}
+        if len(selectors) != 1 or ("--revision" in seen and "--git" not in seen):
+            return None
+        if "--git" in seen and (not _safe_repository_url(seen["--git"]) or
+            not _full_commit(seen.get("--revision"))):
+            return None
+    # Managed observations can write scanner state or cache, but do not grant
+    # trust, change lifecycle state, or authorize external executable reviews.
+    writes = route in {("scan",), ("scan-plugin",), ("plugins", "analyze"),
+                      ("posture", "scan"), ("posture", "digest")}
+    return " ".join(route), writes
 
 
 def is_analyzer(args: list[str]) -> bool:
@@ -211,7 +283,7 @@ def _full_commit(value: Any) -> bool:
 def _safe_repository_url(value: Any) -> bool:
     if not isinstance(value, str) or any(ord(char) < 32 or ord(char) == 127 for char in value):
         return False
-    return bool(re.fullmatch(r"https://[^\s/?#@]+(?:/[^\s?#]*)?", value))
+    return bool(re.fullmatch(r"https://[^\s/?#@\\]+(?:/[^\s?#\\]*)?", value))
 
 
 def _bounded_count(value: Any) -> int | None:
@@ -314,10 +386,10 @@ def validate_review_profile(result: dict[str, Any]) -> str | None:
 
 
 def validate_candidate_report(report: dict[str, Any], args: list[str]) -> str | None:
-    """Validate the v0.2.2 candidate boundary without judging findings."""
+    """Validate the v0.3.2 candidate boundary without judging findings."""
     tool_version = parse_version(report.get("tool_version"))
     if tool_version is None or tool_version < REMOTE_CANDIDATE_MIN:
-        return "candidate route requires omasafe-cli 0.2.2 or newer"
+        return "candidate route requires omasafe-cli 0.3.2 or newer"
     result = report.get("result")
     if not isinstance(result, dict):
         return "candidate result is not an object"
@@ -378,7 +450,7 @@ def validate_local_review_report(report: dict[str, Any]) -> str | None:
     """Validate the bounded review profile without requiring remote acquisition."""
     tool_version = parse_version(report.get("tool_version"))
     if tool_version is None or tool_version < REVIEW_PROFILE_MIN:
-        return "review profile requires omasafe-cli 0.2.2 or newer"
+        return "review profile requires omasafe-cli 0.3.2 or newer"
     result = report.get("result")
     if not isinstance(result, dict):
         return "review result is not an object"
@@ -389,7 +461,7 @@ def validate_executable_review_list(report: dict[str, Any]) -> str | None:
     """Validate the bounded read-only executable-review ledger projection."""
     tool_version = parse_version(report.get("tool_version"))
     if tool_version is None or tool_version < EXECUTABLE_REVIEW_MIN:
-        return "executable-review requires omasafe-cli 0.2.5 or newer"
+        return "executable-review requires omasafe-cli 0.3.2 or newer"
     result = report.get("result")
     if not isinstance(result, dict) or not isinstance(result.get("plugin_id"), str):
         return "executable-review list is missing plugin identity"
@@ -582,7 +654,7 @@ def validate_report(report: Any, args: list[str]) -> tuple[bool, str | None]:
         if "coverage_gaps" in analysis and not isinstance(analysis.get("coverage_gaps"), list):
             return False, "analysis field coverage_gaps is not a list"
 
-    if command in {"plugins enable", "plugins enforcement-status"}:
+    if command == "plugins enforcement-status":
         if "decision" not in result:
             return False, "missing enforcement decision"
         decision = result.get("decision")
@@ -1220,7 +1292,7 @@ def _fit_summary_to_cap(summary: dict[str, Any]) -> dict[str, Any]:
     return _minimal_truncated_summary(summary)
 
 
-def make_summary(args: list[str], cli: str, timeout: float) -> dict[str, Any]:
+def _capture_summary(args: list[str], cli: str, timeout: float, bounded_evidence: bool) -> dict[str, Any]:
     command, _ = command_parts(args)
     cap = SCAN_STREAM_CAP if command in {"scan", "scan-plugin"} else OTHER_STREAM_CAP
     safe_args = [bounded_string(item, ARGV_ITEM_CAP) for item in redact_args(args[:ARGV_COUNT_CAP])]
@@ -1328,6 +1400,11 @@ def make_summary(args: list[str], cli: str, timeout: float) -> dict[str, Any]:
         summary["stdout"] = text_from_bytes(stdout)
         summary["stderr"] = text_from_bytes(stderr)
 
+    if not bounded_evidence:
+        if "report" in summary and parsed_report is not None:
+            summary["report"] = parsed_report
+        return minimal_projection(summary, args)
+
     encoded = _encoded_summary(summary)
     if len(encoded) > SUMMARY_CAP - 1:
         summary["transport"]["summary_truncated"] = True
@@ -1356,10 +1433,112 @@ def make_summary(args: list[str], cli: str, timeout: float) -> dict[str, Any]:
     return summary
 
 
+def minimal_projection(summary: dict[str, Any], args: list[str]) -> dict[str, Any]:
+    """Project known typed fields. Never recursively copy source-derived data."""
+    route = classify_review(args)
+    out = {
+        "status": summary["status"], "exit_code": summary["exit_code"],
+        "command": route[0] if route else "denied",
+        "managed_state_or_cache_writes": bool(route and route[1]),
+        "limitation": LIMITATION, "evidence_mode": "minimal",
+        "transport": summary["transport"],
+    }
+    if args in (["--version"], ["-V"]):
+        match = re.fullmatch(r"omasafe-cli (\d+\.\d+\.\d+)\s*", summary.get("stdout", ""))
+        out["tool_version"] = match[1] if match else None
+    report = summary.get("report")
+    if not isinstance(report, dict):
+        out["detail_available"] = False
+        return out
+    out["detail_available"] = True
+    version = report.get("tool_version")
+    if isinstance(version, str) and re.fullmatch(r"\d+\.\d+\.\d+", version):
+        out["tool_version"] = version
+    result = report.get("result", report)
+    if not isinstance(result, dict):
+        return out
+    def object_at(parent, key):
+        value = parent.get(key)
+        return value if isinstance(value, dict) else {}
+    def hash_fields(parent, keys):
+        return {key: parent[key].lower() for key in keys if isinstance(parent.get(key), str)
+                and re.fullmatch(r"(?:[a-fA-F0-9]{40}|[a-fA-F0-9]{64})", parent[key])}
+    analysis = object_at(result, "analysis")
+    acquisition = object_at(result, "acquisition")
+    out["identity"] = {
+        **hash_fields(object_at(result, "target"), ("revision", "head", "tree", "digest")),
+        **hash_fields(analysis, ("analysis_fingerprint",)),
+    }
+    resolved = hash_fields(object_at(acquisition, "resolved_identity"), ("value",))
+    if resolved:
+        out["identity"]["resolved_commit"] = resolved["value"]
+    out["network_used"] = acquisition.get("network_used") if type(acquisition.get("network_used")) is bool else None
+    totals = analysis_summary(report)
+    if totals is not None:
+        out["collections"] = {}
+        for key in ("findings", "capabilities", "invocation_edges", "coverage_gaps", "code_exposure", "evidence_observations"):
+            counts = totals.get(key)
+            if isinstance(counts, dict):
+                total, emitted, omitted = (counts.get(k) for k in ("total", "emitted", "omitted"))
+                if all(type(n) is int and 0 <= n <= 2**53 for n in (total, emitted, omitted)) and total == emitted + omitted:
+                    out["collections"][key] = {"total": total, "cli_emitted": emitted,
+                        "cli_omitted": omitted, "transport_emitted": 0, "transport_omitted": emitted}
+        out["coverage_limitation_count"] = totals["coverage_limitations"]
+        severities = {level: 0 for level in ("info", "low", "medium", "high", "critical", "unknown")}
+        rules = set()
+        for finding in analysis.get("findings", []):
+            if not isinstance(finding, dict):
+                continue
+            severity = finding.get("severity")
+            severities[severity if isinstance(severity, str) and severity in severities else "unknown"] += 1
+            rule = finding.get("rule_id")
+            if isinstance(rule, str) and re.fullmatch(r"oma\.[a-z0-9.-]{1,72}", rule):
+                rules.add(rule)
+        out["emitted_findings_by_severity"] = severities
+        out["rule_ids"] = sorted(rules)[:128]
+        out["rule_ids_omitted"] = max(0, len(rules) - 128)
+    decision = object_at(result, "decision")
+    if decision:
+        out["enforcement"] = {}
+        for key, allowed in {"evaluation_state": {"evaluated", "not-evaluated"},
+                             "outcome": {"allow", "block"}, "authorization_basis": {"policy", "override"}}.items():
+            value = decision.get(key)
+            out["enforcement"][key] = value if isinstance(value, str) and value in allowed else None
+        for key in ("blockers", "opaque_code_items"):
+            values = decision.get(key)
+            if isinstance(values, list):
+                out["enforcement"][key + "_count"] = len(values)
+    for key in ("plugins", "reviews", "overrides", "rules", "coverage", "checks"):
+        if isinstance(result.get(key), list):
+            out[key + "_count"] = len(result[key])
+    if report.get("schema") == POSTURE_SCHEMA:
+        out["posture_status"] = report.get("status") if report.get("status") in {"complete", "partial", "not_yet_run"} else "unknown"
+        out["posture_coverage"] = {key: value for key in ("complete", "incomplete", "errors", "not_applicable")
+            if type(value := object_at(report, "coverage").get(key)) is int and 0 <= value <= 2**53}
+    return out
+
+
+def make_summary(args: list[str], cli: str, timeout: float, bounded_evidence: bool = False) -> dict[str, Any]:
+    if classify_review(args) is None:
+        return {"status": "denied", "reason_code": "mutation-not-supported", "exit_code": None,
+                "limitation": LIMITATION, "message": "This runner accepts documented review operations only."}
+    summary = _capture_summary(args, cli, timeout, bounded_evidence)
+    # Early transport failures carry OS error text; never forward it by default.
+    if not bounded_evidence and "evidence_mode" not in summary:
+        summary = minimal_projection(summary, args)
+    summary["limitation"] = LIMITATION
+    if bounded_evidence:
+        summary["evidence_mode"] = "bounded-untrusted"
+    summary = _fit_summary_to_cap(summary)
+    assert len(_encoded_summary(summary)) + 1 <= SUMMARY_CAP
+    return summary
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cli", default="omasafe-cli", help="path or name of the CLI")
     parser.add_argument("--timeout", type=float, default=None)
+    parser.add_argument("--bounded-evidence", action="store_true", help="include bounded untrusted report detail")
     parser.add_argument("command", nargs=argparse.REMAINDER, help="place after --")
     options = parser.parse_args()
     args = options.command
@@ -1367,13 +1546,11 @@ def main() -> int:
         args = args[1:]
     timeout = options.timeout
     if timeout is None:
-        if is_marketplace_refresh(args):
-            timeout = MARKETPLACE_REFRESH_TIMEOUT
-        elif is_remote_candidate(args):
+        if is_remote_candidate(args):
             timeout = REMOTE_TIMEOUT
         else:
             timeout = 30.0
-    summary = make_summary(args, options.cli, max(0.1, timeout))
+    summary = make_summary(args, options.cli, max(0.1, timeout), options.bounded_evidence)
     encoded = _encoded_summary(summary).decode("ascii")
     sys.stdout.write(encoded + "\n")
     return 0
